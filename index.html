@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#be2828">
+<title>Sussurros · Mesa Online</title>
+<link rel="icon" href="assets/peoes/08_peao_o_palhaco.webp">
+<link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+
+<!-- ============ TELA INICIAL ============ -->
+<section id="tela-inicio" class="cartaz">
+  <div class="cartaz-moldura">
+    <div class="estrelas">★ ★ ★</div>
+    <p class="sobretitulo">O grande espetáculo apresenta</p>
+    <h1 class="logo">SUSSURROS</h1>
+    <p class="subtitulo">Mesa online · regras v0.4</p>
+    <p class="citacao">"Você não está preso na mansão. A mansão está presa em você."</p>
+
+    <label class="campo">Seu apelido
+      <input id="in-apelido" maxlength="20" autocomplete="nickname" placeholder="Ex.: Vini">
+    </label>
+
+    <div class="blocos-inicio">
+      <div class="bloco">
+        <h2>Criar sala</h2>
+        <p>Seu navegador vira o <b>host</b>: guarda o estado oficial da partida. Feche a aba e a sala acaba.</p>
+        <label class="check"><input type="checkbox" id="in-moderador"> Sou moderador (não jogo, só conduzo)</label>
+        <button id="bt-criar" class="bt bt-vermelho">Criar sala</button>
+        <button id="bt-retomar" class="bt bt-claro" hidden>Retomar sala salva</button>
+      </div>
+      <div class="bloco">
+        <h2>Entrar</h2>
+        <label class="campo">Código da sala
+          <input id="in-codigo" maxlength="5" autocapitalize="characters" placeholder="ABCDE" class="codigo">
+        </label>
+        <button id="bt-entrar" class="bt bt-turquesa">Entrar na sala</button>
+      </div>
+    </div>
+    <p class="nota">3 a 6 jogadores · voz pelo Discord · nada é instalado</p>
+    <p id="msg-inicio" class="msg" role="status"></p>
+  </div>
+</section>
+
+<!-- ============ MESA ============ -->
+<section id="tela-mesa" hidden>
+  <header class="topo">
+    <div class="marca">SUSSURROS</div>
+    <button id="bt-sala" class="sala" title="Copiar link de convite">Sala <b id="txt-codigo">-----</b> <span class="ico">· convidar</span></button>
+    <div id="relogio" class="relogio" aria-label="Relógio de rodadas"></div>
+    <div class="acoes-topo">
+      <button class="bt bt-mini" id="bt-rel-menos" title="Voltar o Relógio">−</button>
+      <button class="bt bt-mini" id="bt-rel-mais" title="Avançar o Relógio">+ Rodada</button>
+      <button class="bt bt-mini bt-mostarda" id="bt-dado" title="Rolar o Dado do Olho à vista">Dado</button>
+      <button class="bt bt-mini bt-claro" id="bt-dado-esc" title="Rolar escondido (Delírio, oráculo falso)">Dado escondido</button>
+      <button class="bt bt-mini bt-escuro" id="bt-noite">Noite</button>
+      <button class="bt bt-mini bt-claro" id="bt-menu" aria-haspopup="true">☰</button>
+    </div>
+    <div id="menu" class="menu" hidden>
+      <button id="mn-convite">Copiar link de convite</button>
+      <button id="mn-iniciar" data-host>Iniciar partida</button>
+      <button id="mn-abrir" data-host>Abrir Discos (fim de jogo)</button>
+      <button id="mn-voltar" data-host>Fechar Discos e continuar</button>
+      <button id="mn-nova" data-host>Nova partida (mesmas pessoas)</button>
+      <button id="mn-amanhecer" data-host>Forçar amanhecer</button>
+      <button id="mn-regras">Resumo das regras</button>
+      <button id="mn-sair">Sair da mesa</button>
+    </div>
+  </header>
+
+  <main class="area">
+    <section id="mapa" class="mapa">
+      <div id="mundo" class="mundo">
+        <img id="planta" alt="Planta da mansão" draggable="false">
+        <div id="camada-fichas"></div>
+        <div id="camada-peoes"></div>
+      </div>
+      <div class="zoom">
+        <button class="bt bt-mini bt-claro" id="zm-mais" aria-label="Aproximar">+</button>
+        <button class="bt bt-mini bt-claro" id="zm-menos" aria-label="Afastar">−</button>
+        <button class="bt bt-mini bt-claro" id="zm-ajustar" aria-label="Ver tudo">⤢</button>
+      </div>
+      <div id="sala-atual" class="sala-atual"></div>
+
+      <!-- Saguão de espera (antes de iniciar) -->
+      <div id="lobby" class="lobby" hidden>
+        <div class="lobby-caixa">
+          <h2>Escolha seu Hóspede</h2>
+          <p class="convite">Convide: <b id="lb-codigo"></b> · <button class="link" id="lb-copiar">copiar link</button></p>
+          <div id="lb-hospedes" class="grade-hospedes"></div>
+          <div class="lb-rodape">
+            <div id="lb-jogadores" class="lb-jogadores"></div>
+            <button id="lb-assistir" class="bt bt-claro bt-mini">Só assistir</button>
+            <button id="lb-iniciar" class="bt bt-vermelho" hidden>Iniciar partida</button>
+            <p id="lb-espera" class="nota"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside id="painel" class="painel">
+      <nav class="abas" role="tablist">
+        <button role="tab" data-aba="mao" class="ativa">Mão <span id="n-mao" class="bolha"></span></button>
+        <button role="tab" data-aba="disco">Disco</button>
+        <button role="tab" data-aba="mesa">Mesa</button>
+        <button role="tab" data-aba="log">Log <span id="n-log" class="bolha"></span></button>
+      </nav>
+      <div class="conteudo">
+        <div data-pagina="mao" class="pagina ativa" id="pg-mao"></div>
+        <div data-pagina="disco" class="pagina" id="pg-disco"></div>
+        <div data-pagina="mesa" class="pagina" id="pg-mesa"></div>
+        <div data-pagina="log" class="pagina" id="pg-log"></div>
+      </div>
+    </aside>
+  </main>
+</section>
+
+<!-- ============ NOITE ============ -->
+<div id="noite" class="noite" hidden>
+  <div class="noite-caixa">
+    <div class="olho">◉</div>
+    <p class="noite-titulo">Noite</p>
+    <p id="noite-texto">Todos fecham os olhos...</p>
+    <button id="bt-amanhecer" class="bt bt-claro" disabled>Amanhecer</button>
+  </div>
+</div>
+
+<!-- ============ DADO ============ -->
+<div id="dado-pop" class="dado-pop" hidden>
+  <img id="dado-img" alt="">
+  <p id="dado-txt"></p>
+</div>
+
+<!-- ============ MODAL ============ -->
+<div id="modal" class="modal" hidden>
+  <div class="modal-caixa" role="dialog" aria-modal="true">
+    <button class="fechar" id="modal-fechar" aria-label="Fechar">×</button>
+    <div id="modal-corpo"></div>
+  </div>
+</div>
+
+<div id="aviso" class="aviso" role="status" aria-live="polite"></div>
+
+<script src="js/peerjs.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

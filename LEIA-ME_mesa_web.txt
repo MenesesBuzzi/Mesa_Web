@@ -1,0 +1,179 @@
+SUSSURROS · MESA ONLINE (regras v0.4)
+=====================================
+
+Mesa própria, no navegador, para jogar Sussurros com 3 a 6 pessoas. Substitui o Screentop.
+É um site estático (HTML, CSS e JavaScript puro, sem build e sem servidor próprio).
+A conexão entre os jogadores é peer-to-peer (WebRTC) com PeerJS. A voz fica no Discord.
+
+É uma mesa "sandbox assistida": ela embaralha, compra, esconde e mostra as cartas certas para
+as pessoas certas, mas NÃO aplica as regras sozinha (quem anda quanto, quem perde quanto etc.).
+Os jogadores fazem isso, como na mesa física.
+
+
+-----------------------------------------------------------------------------
+1. RODAR NO SEU COMPUTADOR
+-----------------------------------------------------------------------------
+
+Precisa de um servidor HTTP qualquer (abrir o index.html direto com file:// não funciona,
+porque os módulos JavaScript exigem http).
+
+   cd mesa_web
+   python3 -m http.server 8080
+   (ou:  npx serve .   ou a extensão "Live Server" do VS Code)
+
+Abra http://localhost:8080 . Para testar sozinho, abra a mesma página em outra janela
+anônima (ou outro navegador), crie a sala numa e entre com o código na outra.
+Precisa de internet mesmo rodando local: a sinalização usa o servidor público do PeerJS.
+
+Testes automáticos (opcionais):
+   node testes/protocolo.test.mjs        -> testa motor + privacidade sem rede (só Node 18+)
+   npm i playwright && npx playwright install chromium
+   python3 -m http.server 8080 &
+   node testes/e2e_playwright.mjs        -> 1 host + 3 convidados em Chromium headless,
+                                            rede real; confere que nada secreto vaza e
+                                            refaz as capturas de tela em capturas/
+
+
+-----------------------------------------------------------------------------
+2. PUBLICAR NO GITHUB PAGES (grátis), PASSO A PASSO
+-----------------------------------------------------------------------------
+
+1. Crie uma conta em https://github.com (se ainda não tiver).
+2. Clique em "New repository". Nome, por exemplo: sussurros-mesa. Deixe "Public".
+   (Pages grátis exige repositório público no plano Free.)
+3. Envie o conteúdo da pasta mesa_web para a RAIZ do repositório.
+   Jeito fácil: na página do repositório, "Add file" > "Upload files" e arraste TUDO que está
+   dentro de mesa_web (index.html, css/, js/, assets/ ...). Não precisa enviar testes/ nem
+   capturas/ nem ferramentas/, mas não atrapalham. NÃO envie node_modules.
+   Jeito git:
+      cd mesa_web
+      git init && git add . && git commit -m "Mesa Sussurros"
+      git branch -M main
+      git remote add origin https://github.com/SEU-USUARIO/sussurros-mesa.git
+      git push -u origin main
+4. No repositório: Settings > Pages > "Build and deployment" > Source: "Deploy from a branch",
+   Branch: main, pasta: / (root) > Save.
+5. Espere 1 ou 2 minutos. O endereço aparece no topo da página de Pages:
+      https://SEU-USUARIO.github.io/sussurros-mesa/
+6. Mande esse link para o grupo. Quem cria a sala clica em "Criar sala" e depois em
+   "convidar" (topo) para copiar o link com o código (ex.: .../sussurros-mesa/#K7QXA).
+
+Para atualizar depois: envie os arquivos alterados de novo (ou git push). O arquivo .nojekyll
+já está incluído para o GitHub servir tudo sem processar.
+
+
+-----------------------------------------------------------------------------
+3. COMO JOGAR NA MESA
+-----------------------------------------------------------------------------
+
+- Uma pessoa cria a sala (vira o HOST). Os outros entram com o código ou o link, e um apelido.
+- Cada um escolhe um Hóspede. O host clica em "Iniciar partida": as 11 Fichas de Sala são
+  embaralhadas e postas nos círculos FICHA, os baralhos são embaralhados, cada um recebe
+  3 Dicas, todos começam com 80% no Disco e no Saguão, Relógio no 1.
+- Planta: arraste para mover a vista, roda do mouse ou pinça para zoom, botões + − ⤢.
+  Arraste o SEU peão (o de anel dourado tracejado). O Palhaço qualquer um arrasta.
+- Fichas de Sala: toque na Ficha do cômodo onde seu peão está > "Olhar em segredo".
+  Depois: "Deixar virada para cima" ou, se for Chave, "Pegar a Chave" (fica à vista).
+  A Médium tem o botão extra para olhar a Ficha de qualquer cômodo.
+- Aba MÃO: sua ficha (toque para ampliar), "Usei a habilidade" (vira a ficha USADA),
+  Corrente de Laço, botões de compra (Evento, Dica, Distorção, Laço, Pacto, Sanidade do
+  seu nível e dos 5 níveis), sua mão (toque numa carta: revelar a todos, descartar sem
+  mostrar, dar como Dica) e as Dicas que você recebeu (Seguir = revela a todos; Ignorar =
+  descarta sem revelar).
+- Aba DISCO: sua sanidade secreta (0 a 100, passos de 5), nível, "Estou Tomado"
+  (marcado sozinho ao comprar um Pacto), Fichas que você olhou e Dicas que você deu.
+- Aba MESA: última carta revelada, último dado, todos os jogadores (nível da última carta
+  de Sanidade, Dicas na mão, Dicas recebidas, Chaves, Corrente, cartas à vista), "Dar Dica",
+  e a contagem dos baralhos.
+- Aba LOG: tudo o que aconteceu. Linhas "só você" são privadas.
+- Topo: Relógio 1–12 (+ Rodada / −), Dado (à vista), Dado escondido (só você vê o resultado;
+  serve para Delírio e oráculo falso), Noite, e o menu ☰.
+- NOITE: todos veem a tela escura. Quem está marcado como Tomado recebe em segredo
+  1 carta de Sanidade 10% e vê a planta por baixo para mover o Palhaço 1 cômodo.
+  "Amanhecer" libera depois de 7 segundos (para ninguém deduzir nada pela pressa).
+- Fim: menu ☰ > "Abrir Discos" (só o host) mostra a sanidade e quem estava Tomado.
+  "Nova partida" recomeça com as mesmas pessoas.
+- Se a internet de um convidado cair, ele volta sozinho (ou recarregando a página com o
+  mesmo link: o navegador lembra o lugar dele). Se o HOST recarregar, ele pode usar
+  "Retomar sala XXXXX" na tela inicial: o estado fica salvo no navegador dele.
+
+
+-----------------------------------------------------------------------------
+4. PRIVACIDADE: O QUE CADA UM RECEBE
+-----------------------------------------------------------------------------
+
+O navegador do host guarda o estado oficial e manda a cada jogador só a "visão" dele
+(função visao() em js/motor.js). Pela rede, nenhum convidado recebe:
+  - as cartas da mão dos outros (Dicas com selo, Distorções, Pacto, Sanidade 10% da Noite...);
+  - a carta de uma Dica virada para baixo (nem quem recebeu: só vê ao Seguir, e aí todos veem);
+  - a sanidade e o "Tomado" dos outros (até Abrir Discos);
+  - Fichas de Sala ainda viradas (cada um só recebe as que ele mesmo olhou);
+  - o dado escondido dos outros e as linhas "só você" do log deles;
+  - o tamanho dos baralhos de Pacto e Sanidade 10% (contar revelaria quem é Tomado).
+Todos veem de qual NÍVEL cada um comprou a carta de Sanidade, como manda a regra.
+A compra de Pacto não aparece no log público.
+Os testes conferem isso: testes/protocolo.test.mjs (143 checagens) e
+testes/e2e_playwright.mjs (321 checagens nas mensagens que de fato chegaram pela rede).
+
+LIMITAÇÃO IMPORTANTE: o HOST tem tecnicamente o estado inteiro na memória do navegador dele.
+Ele não vê nada disso na tela, mas um host que abra as ferramentas de desenvolvedor (F12)
+consegue ler tudo, e o estado também fica salvo no localStorage dele. Duas saídas:
+  a) o host é um MODERADOR que não joga (marque "Sou moderador" ao criar a sala); ou
+  b) o grupo aceita essa limitação e confia no host (como confiar em quem embaralha).
+As imagens das cartas são públicas no site (como as cartas da caixa); o segredo é QUAL carta
+está com quem, e isso só o host sabe.
+
+
+-----------------------------------------------------------------------------
+5. LIMITAÇÕES E O QUE FICOU DE FORA
+-----------------------------------------------------------------------------
+
+- Não é motor de regras: não conta movimento por portas, não aplica fobia, Susto, Capela,
+  +10%/−10% das Dicas, Distorção automática por nível nem vitória. Os jogadores aplicam e
+  ajustam o Disco. A mesa só lembra (ex.: o botão "Comprar Sanidade do meu nível" escolhe o
+  baralho pela sua sanidade; Tomado compra do 25%).
+- O Palhaço não anda sozinho no fim da rodada: role o Dado e arraste.
+- Habilidades são só o botão "Usei a habilidade" (exceção: a Médium tem o botão de olhar
+  qualquer Ficha). O Radialista, o Contador de Histórias etc. são resolvidos na conversa.
+- Delírio: a mesa não inverte o selo nem o texto; use o "Dado escondido" e aplique.
+- Chaves: pegar e passar para outro jogador funcionam; não dá para devolver uma Chave a um
+  cômodo nem largar no Palco (basta ela estar na frente de quem está no Palco).
+- Quando um baralho acaba, o descarte dele é reembaralhado sozinho.
+- Se o host fechar a aba, a sala cai para todos (dá para retomar pelo navegador do host).
+- Rede: usa o servidor público grátis 0.peerjs.com só para os navegadores se acharem; se ele
+  estiver fora do ar, ninguém conecta. Em redes muito fechadas (algumas empresas, 4G com NAT
+  simétrico) a conexão direta pode falhar: aí é preciso um servidor TURN (veja js/config.js).
+- O tamanho dos baralhos visíveis e a ordem/hora das mensagens não revelam cartas, mas quem
+  abrir o F12 sabe que ALGUÉM moveu o Palhaço durante a Noite (não quem) - igual ao físico,
+  em que todos veem que ele mudou de lugar.
+- Testado em Chromium headless (desktop 1440x900 e celular 390x844). Não testei em Safari/iPhone
+  de verdade nem entre redes diferentes (o teste rodou com as abas na mesma máquina).
+- 4 cartas de Sanidade ainda falam em girar/trocar Salas (pendência das cartas, não da mesa).
+
+
+-----------------------------------------------------------------------------
+6. ARQUIVOS
+-----------------------------------------------------------------------------
+
+index.html ........... página única
+css/estilo.css ....... visual (cartaz de circo: creme, vermelho, mostarda, turquesa; Cinzel + EB Garamond)
+js/app.js ............ interface (telas, abas, modais, noite, dado)
+js/mapa.js ........... planta com zoom/arrasto, peões e Fichas de Sala
+js/sessao.js ......... liga motor, rede e interface (host e convidado)
+js/motor.js .......... estado oficial + ações + visao() por jogador (só roda no host)
+js/rede.js ........... PeerJS (host e convidado, reconexão)
+js/config.js ......... STUN/TURN e servidor PeerJS (único arquivo para editar)
+js/dados.js .......... baralhos, Hóspedes, coordenadas da planta (GERADO)
+js/peerjs.min.js ..... PeerJS 1.5.4 (cópia local, sem depender de CDN)
+assets/ .............. imagens leves (cartas, fichas, peões, dado, relógio, personagens, planta) e fontes
+ferramentas/gera_dados.py ... regenera js/dados.js a partir de assets/ e dos CSVs
+                              (digital/screentop/grades_tts/*.csv: ordem e selo das Dicas)
+ferramentas/coords_mansao.py/.json ... coordenadas dos cômodos e círculos FICHA na planta
+                              (mesma geometria de mapa/tabuleiro.py e tabuleiro_digital.py)
+testes/ .............. teste de protocolo (Node) e teste de ponta a ponta (Playwright)
+capturas/ ............ telas do host e dos convidados (desktop e celular)
+
+Protocolo (JSON pelo DataChannel):
+  convidado -> host: {t:'entrar', apelido, token} | {t:'acao', pedido, a:{t:'comprar', baralho:'evento'} ...}
+  host -> convidado: {t:'bemvindo', id, token} | {t:'visao', v} | {t:'pos', alvo, x, y}
+                     | {t:'resposta', pedido, ok, erro, carta?} | {t:'expulso'}
