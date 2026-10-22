@@ -16,7 +16,7 @@ export function salaSalva() {
 }
 
 // Respostas privadas: só campos que pertencem a quem pediu.
-function resposta(r) { const o = { ok: r.ok }; if (r.erro) o.erro = r.erro; if (r.carta) o.carta = r.carta; if (r.ficha) o.ficha = r.ficha; if (r.face) o.face = r.face; return o; }
+function resposta(r) { const o = { ok: r.ok }; if (r.erro) o.erro = r.erro; if (r.carta) o.carta = r.carta; if (r.ficha) o.ficha = r.ficha; if (r.face) o.face = r.face; if (r.msg) o.msg = r.msg; return o; }
 
 export class SessaoHost {
   constructor({ apelido, moderador, salvo, aoVisao, aoPos, aoAviso }) {
@@ -35,7 +35,7 @@ export class SessaoHost {
       }
     }
     this.codigo = codigo;
-    if (this.salvo) { this.e = this.salvo.estado; for (const j of Object.values(this.e.jogadores)) if (!j.ehHost) j.conectado = false; }
+    if (this.salvo) { this.e = Motor.normalizar(this.salvo.estado); for (const j of Object.values(this.e.jogadores)) if (!j.ehHost) j.conectado = false; }
     else this.e = Motor.novoJogo(codigo, { moderador: this.moderador });
     let token = localStorage.getItem(chaveToken(codigo));
     const r = Motor.entrar(this.e, { apelido: this.apelido, token, ehHost: true });

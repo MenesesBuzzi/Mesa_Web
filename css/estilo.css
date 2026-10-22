@@ -259,3 +259,28 @@ body:not(.sou-host) .menu [data-host] { display: none; }
   .hosp-nome { font-size: 10px; } .hosp-dono { font-size: 12px; }
   .lobby { padding: 8px; } .lobby-caixa { padding: 14px 10px; }
 }
+
+/* ===== Palhaço com IA ===== */
+.peao.deslizando { transition: none; z-index: 6; }
+.peao-moedas { position: absolute; right: -10px; top: -10px; min-width: 58px; height: 58px; padding: 0 8px; border-radius: 29px; background: radial-gradient(circle at 35% 30%, #f6d77a, var(--most) 60%, #8a6414); border: 5px solid var(--tinta); color: var(--tinta); font: 900 32px/48px var(--titulo); text-align: center; pointer-events: none; box-shadow: 3px 4px 0 rgba(70,28,24,.45); }
+.palhaco-fala { position: fixed; left: 50%; top: calc(var(--topo) + 14px); transform: translateX(-50%); z-index: 57; display: flex; align-items: center; gap: 10px; max-width: min(620px, 94vw); background: var(--papel); border: 3px solid var(--tinta); border-radius: 18px; padding: 8px 18px 8px 8px; box-shadow: 5px 5px 0 var(--verm); pointer-events: none; }
+.palhaco-fala::after { content: ''; position: absolute; left: 34px; bottom: -14px; border: 12px solid transparent; border-top-color: var(--tinta); border-bottom: 0; }
+.palhaco-fala img { width: 54px; height: 54px; flex: none; filter: drop-shadow(2px 3px 0 rgba(70,28,24,.4)); }
+.palhaco-fala p { margin: 0; font: italic 600 19px/1.25 var(--texto); }
+.palhaco-fala.entra { animation: fala-entra .35s cubic-bezier(.2,1.6,.4,1); }
+@keyframes fala-entra { from { transform: translateX(-50%) scale(.6) rotate(-4deg); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
+.clipe { position: fixed; inset: 0; z-index: 59; background: rgba(30, 8, 6, .72); display: flex; align-items: center; justify-content: center; padding: 12px; }
+.clipe-caixa { position: relative; width: min(760px, 96vw); border: 6px solid var(--most); border-radius: 12px; background: #000; box-shadow: 0 0 0 4px var(--tinta), 8px 10px 0 4px var(--verm); overflow: hidden; }
+.clipe-caixa video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+#clipe-pular { position: absolute; right: 10px; bottom: 10px; opacity: .92; }
+.proposta { position: fixed; inset: 0; z-index: 61; background: rgba(20, 4, 4, .55); display: flex; align-items: center; justify-content: center; padding: 14px; }
+.proposta-caixa { position: relative; max-width: 440px; width: 100%; background: var(--tinta); color: var(--papel); border: 4px solid var(--verm); border-radius: 14px; padding: 18px 20px 14px; text-align: center; box-shadow: 0 0 40px rgba(190,40,40,.6), 6px 6px 0 var(--most); animation: fala-entra2 .4s ease-out; }
+@keyframes fala-entra2 { from { transform: scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
+.proposta-caixa img { width: 76px; height: 76px; margin-top: -54px; filter: drop-shadow(0 0 10px rgba(226,184,80,.8)); }
+.proposta-sobre { margin: 4px 0; font: 700 14px var(--titulo); letter-spacing: .08em; color: var(--most-cl); text-transform: uppercase; }
+.proposta-txt { font: italic 600 23px/1.3 var(--texto); margin: 8px 0 14px; }
+.proposta .linha-bt { justify-content: center; }
+.proposta .nota { color: #d9c7a3; font-size: 13px; margin-top: 10px; }
+.jog-info .moedas { background: var(--most-cl); border: 1px solid var(--most); border-radius: 10px; padding: 0 8px; font-weight: 700; }
+.palhaco-ctrl { background: var(--papel); border: 2px dashed var(--most); border-radius: 8px; padding: 8px 10px; }
+.palhaco-ctrl .check { margin: 6px 0; }

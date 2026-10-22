@@ -9,14 +9,15 @@ import { $, $$, esc, aviso, copiar, hora } from './util.js';
 let S = null;          // sessão (host ou convidado)
 let V = null;          // última visão recebida
 let mapa = null;
-const visto = { dado: 0, dadoPriv: 0, destaque: 0, log: 0, noite: 0, discos: false, primeira: true };
+const visto = { dado: 0, dadoPriv: 0, destaque: 0, log: 0, noite: 0, discos: false, primeira: true, show: 0 };
 let abaAtual = 'mao';
 
 const carta = (cid) => DADOS.cartas[cid];
 const nomeHosp = (h) => h == null ? null : DADOS.hospedes[h].nome;
-const jogador = (id) => V?.jogadores.find(j => j.id === id);
-const rotulo = (j) => j ? (j.hospede != null ? `${esc(j.apelido)} <small>(${esc(nomeHosp(j.hospede))})</small>` : esc(j.apelido)) : '?';
-const rotuloTxt = (j) => j ? (j.hospede != null ? `${j.apelido} (${nomeHosp(j.hospede)})` : j.apelido) : '?';
+const PALHACO = { id: 'palhaco', apelido: 'o Palhaço', hospede: null };
+const jogador = (id) => id === 'palhaco' ? PALHACO : V?.jogadores.find(j => j.id === id);
+const rotulo = (j) => j === PALHACO ? '<b>o Palhaço</b>' : j ? (j.hospede != null ? `${esc(j.apelido)} <small>(${esc(nomeHosp(j.hospede))})</small>` : esc(j.apelido)) : '?';
+const rotuloTxt = (j) => j === PALHACO ? 'o Palhaço' : j ? (j.hospede != null ? `${j.apelido} (${nomeHosp(j.hospede)})` : j.apelido) : '?';
 const salaDe = (p) => { if (!p) return null; for (const s of DADOS.mansao.salas) if (p.x >= s.x0 && p.x <= s.x1 && p.y >= s.y0 && p.y <= s.y1) return s.nome; return null; };
 
 async function enviar(a, ok) {
@@ -113,10 +114,11 @@ function aoSoltarPeao(alvo, x, y, final) { if (!S) return; S.enviar({ t: 'mover'
 // ===================== RECEBER VISÃO =====================
 function receberVisao(v) {
   const ant = V; V = v;
+  receberShows(v);
   document.body.classList.toggle('fase-lobby', v.fase === 'lobby');
   document.body.classList.toggle('sou-host', !!v.eu?.ehHost);
   mapa?.atualizar(v);
-  renderRelogio(v); renderLobby(v); renderMao(v); renderDisco(v); renderMesa(v); renderLog(v); renderNoite(v);
+  renderRelogio(v); renderLobby(v); renderMao(v); renderDisco(v); renderMesa(v); renderLog(v); renderNoite(v); renderProposta(v);
   $('#bt-noite').disabled = v.fase !== 'jogo'; $('#bt-rel-mais').disabled = $('#bt-rel-menos').disabled = v.fase !== 'jogo';
   $('#mn-iniciar').hidden = v.fase !== 'lobby'; $('#mn-abrir').hidden = v.fase !== 'jogo'; $('#mn-voltar').hidden = v.fase !== 'fim';
   $('#mn-amanhecer').hidden = !v.noite.ativa;
@@ -126,7 +128,7 @@ function receberVisao(v) {
   if (!visto.primeira) {
     if (v.dado && v.dado.seq > visto.dado) mostrarDado(v.dado.face, `${rotuloTxt(jogador(v.dado.por))} rolou o Dado do Olho`, false);
     if (v.eu?.dadoPrivado && v.eu.dadoPrivado.seq > visto.dadoPriv) mostrarDado(v.eu.dadoPrivado.face, 'Dado escondido: só você vê', true);
-    if (v.destaque && v.destaque.seq > visto.destaque && v.destaque.por !== v.eu?.id) mostrarDestaque(v.destaque);
+    if (v.destaque && v.destaque.seq > visto.destaque && v.destaque.por !== v.eu?.id && v.destaque.por !== 'palhaco') mostrarDestaque(v.destaque);
     if (v.discosAbertos && !visto.discos) modalDiscos();
   }
   visto.dado = v.dado?.seq || 0; visto.dadoPriv = v.eu?.dadoPrivado?.seq || 0; visto.destaque = v.destaque?.seq || 0; visto.discos = v.discosAbertos;
@@ -267,7 +269,7 @@ function renderMesa(v) {
   const pg = $('#pg-mesa'); const d = v.destaque;
   const nivelBadge = (n) => n ? `<span class="nivel-badge n${n}" title="Última carta de Sanidade comprada">${n}%</span>` : '<span class="nivel-badge" title="Ainda não comprou Sanidade">—</span>';
   pg.innerHTML = `
-    ${d ? `<div class="destaque"><button class="carta-bt" data-zoomc="${d.carta}">${imgCarta(d.carta)}</button><p>${d.motivo === 'seguiu' ? 'Dica seguida' : 'Última carta revelada'}<br><b>${rotulo(jogador(d.por))}</b></p></div>` : ''}
+    ${d ? `<div class="destaque"><button class="carta-bt" data-zoomc="${d.carta}">${imgCarta(d.carta)}</button><p>${d.motivo === 'seguiu' ? 'Dica seguida' : d.motivo === 'palhaco' ? 'Evento tirado pelo Palhaço' : 'Última carta revelada'}<br><b>${rotulo(jogador(d.por))}</b></p></div>` : ''}
     ${v.dado ? `<p class="ultimo-dado"><img src="${DADOS.dado[v.dado.face]}" alt=""><span>Último dado à vista: <b>${v.dado.face <= 2 ? 'olho ABERTO' : 'olho fechado'}</b> · ${rotulo(jogador(v.dado.por))}</span></p>` : ''}
     <h3 class="sec">Na mesa</h3>
     <div class="jogadores">${v.jogadores.map(j => {
@@ -277,6 +279,7 @@ function renderMesa(v) {
           <div class="jog-nome"><b>${esc(j.apelido)}</b>${j.ehHost ? ' <small class="tag">host</small>' : ''}${j.id === v.eu?.id ? ' <small class="tag">você</small>' : ''}<br><small>${h ? esc(h.nome) + ' · ' + esc(salaDe(j.pos) || '?') : (j.ehHost && v.moderador ? 'moderador' : 'assistindo')}${j.conectado ? '' : ' · desconectado'}</small></div>
           ${h ? nivelBadge(j.ultimoNivel) : ''}</div>
         ${h ? `<div class="jog-info">
+          ${v.pedagio ? `<span class="moedas" title="Moedas (à vista)">${j.moedas} moeda${j.moedas === 1 ? '' : 's'}</span>` : ''}
           <span title="Dicas na mão">${j.nDicasMao} Dica${j.nDicasMao === 1 ? '' : 's'} na mão</span>
           ${j.dicasRecebidas.length ? `<span title="Dicas recebidas, viradas para baixo">${j.dicasRecebidas.length} recebida${j.dicasRecebidas.length > 1 ? 's' : ''} (de ${j.dicasRecebidas.map(x => esc(jogador(x.de)?.apelido || '?')).join(', ')})</span>` : ''}
           ${j.chaves ? `<span class="chave">${j.chaves} Chave${j.chaves > 1 ? 's' : ''}</span>` : ''}
@@ -293,11 +296,19 @@ function renderMesa(v) {
         </div>` : (v.eu?.ehHost && j.id !== v.eu.id ? `<div class="linha-bt"><button class="bt bt-mini bt-claro" data-expulsar="${j.id}">Tirar</button></div>` : '')}
       </div>`;
     }).join('')}</div>
-    <p class="nota">O <b>Palhaço</b> é o peão de anel branco: qualquer um pode arrastá-lo no mapa. Na Noite, os Tomados podem movê-lo 1 cômodo.</p>
+    <h3 class="sec">O Palhaço</h3>
+    <div class="palhaco-ctrl">
+      ${v.eu?.ehHost ? `<label class="check"><input type="checkbox" id="pc-auto" ${v.palhacoAuto ? 'checked' : ''}> <b>Palhaço automático</b> (anda sozinho no "+ Rodada", fala, tira Eventos, faz propostas)</label>
+      <label class="check"><input type="checkbox" id="pc-pedagio" ${v.pedagio ? 'checked' : ''}> <b>Pedágio e moedas</b> (quem cruza com ele paga 1 moeda e é mandado para outro cômodo)</label>`
+      : `<p>Palhaço automático: <b>${v.palhacoAuto ? 'ligado' : 'desligado'}</b> · Pedágio: <b>${v.pedagio ? 'ligado' : 'desligado'}</b> <small>(o host muda)</small></p>`}
+    </div>
+    <p class="nota">O <b>Palhaço</b> é o peão de anel branco. ${v.palhacoAuto ? 'No fim de cada rodada ele anda 1 ou 2 cômodos pelas portas, atrás de alguém.' : 'Modo manual: role o Dado e arraste.'} Qualquer um pode arrastá-lo; na Noite, os Tomados podem movê-lo 1 cômodo.</p>
     ${v.fase !== 'lobby' && Object.keys(v.baralhos).length ? `<h3 class="sec">Baralhos</h3><table class="baralhos"><tr><th>Baralho</th><th>Compra</th><th>Descarte</th></tr>
       ${Object.entries(v.baralhos).map(([b, x]) => `<tr><td>${DADOS.baralhos[b].rotulo}</td><td>${x.n ?? '?'}</td><td>${x.descarte ?? '?'}</td></tr>`).join('')}</table>
       <p class="nota">"?" = escondido de propósito (contar o Pacto e a Sanidade 10% revelaria os Tomados). Baralho vazio reembaralha o descarte sozinho.</p>` : ''}`;
   $$('#pg-mesa [data-zoomc]').forEach(b => b.onclick = () => modalCarta(b.dataset.zoomc, 'ver'));
+  $('#pc-auto') && ($('#pc-auto').onchange = (e) => enviar({ t: 'palhacoConfig', auto: e.target.checked }));
+  $('#pc-pedagio') && ($('#pc-pedagio').onchange = (e) => enviar({ t: 'palhacoConfig', pedagio: e.target.checked }));
   $$('#pg-mesa [data-dar]').forEach(b => b.onclick = () => modalDarDica(b.dataset.dar));
   $$('#pg-mesa [data-corr]').forEach(b => b.onclick = () => enviar({ t: 'corrente', alvo: b.dataset.corr, valor: b.dataset.val === 'true' }));
   $$('#pg-mesa [data-achar]').forEach(b => b.onclick = () => { const j = jogador(b.dataset.achar); if (j?.pos) mapa.focar(j.pos.x, j.pos.y, 0.5); });
@@ -322,6 +333,104 @@ function renderNoite(v) {
   clearInterval(renderNoite._t);
   const tic = () => { const r = Math.ceil((fim - Date.now()) / 1000); bt.disabled = r > 0; bt.textContent = r > 0 ? `Amanhecer (${r})` : 'Amanhecer'; if (r <= 0) clearInterval(renderNoite._t); };
   tic(); renderNoite._t = setInterval(tic, 500);
+}
+
+
+// ===================== PALHAÇO COM IA: shows (fala + sino, peão deslizando, dado, clipe, Evento) =====================
+const filaShow = []; let tocandoShow = false;
+const espera = (ms) => new Promise(r => setTimeout(r, ms));
+function receberShows(v) {
+  const shows = v.shows || [];
+  if (visto.primeira) { visto.show = shows.at(-1)?.seq || 0; return; }   // quem acabou de entrar não revê o passado
+  for (const sh of shows) {
+    if (sh.seq <= visto.show) continue;
+    visto.show = sh.seq;
+    for (const p of sh.passos) { filaShow.push(p); if (p.t === 'mov') mapa?.reservar('palhaco', p.pegos || []); }
+  }
+  if (!tocandoShow && filaShow.length) tocarFila();
+}
+async function tocarFila() {
+  tocandoShow = true;
+  while (filaShow.length) {
+    const p = filaShow.shift();
+    try {
+      if (p.t === 'fala') { mostrarFala(p.texto); tocarSino(); await espera(2200 + p.texto.length * 30); }
+      else if (p.t === 'mov') { await mapa.animar('palhaco', p.caminho, p.pegos || []); }
+      else if (p.t === 'dado') { mostrarDado(p.face, p.txt, false); await espera(1900); }
+      else if (p.t === 'video') { await tocarClipe(p.clipe); }
+      else if (p.t === 'evento') { mostrarEventoPalhaco(p.carta); await espera(900); }
+    } catch (err) { console.warn('[palhaço] passo falhou', err); }
+  }
+  esconderFala();
+  tocandoShow = false;
+}
+function mostrarFala(txt) {
+  const el = $('#palhaco-fala'); $('#palhaco-fala-txt').textContent = txt;
+  el.hidden = false; el.classList.remove('entra'); void el.offsetWidth; el.classList.add('entra');
+  clearTimeout(mostrarFala._t); mostrarFala._t = setTimeout(esconderFala, 2400 + txt.length * 30);
+}
+function esconderFala() { $('#palhaco-fala').hidden = true; }
+
+// Sino sintetizado (WebAudio): mesmo timbre do vídeo explicativo (parciais 1, 2, 2.76, 5.4, 8.93).
+let audio = null;
+function ctxAudio() {
+  if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) { return null; } }
+  if (audio.state === 'suspended') audio.resume().catch(() => {});
+  return audio;
+}
+['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => ctxAudio(), { once: false, passive: true }));
+function tocarSino(vezes = 2) {
+  const a = ctxAudio(); if (!a || a.state !== 'running') return;
+  const mestre = a.createGain(); mestre.gain.value = 0.18; mestre.connect(a.destination);
+  for (let k = 0; k < vezes; k++) {
+    const t0 = a.currentTime + k * 0.32, f = k % 2 ? 1180 : 1320;
+    for (const [h, amp, dk] of [[1, 1, 3], [2, 0.5, 4], [2.76, 0.45, 5], [5.4, 0.25, 8], [8.93, 0.12, 12]]) {
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = 'sine'; o.frequency.value = f * h;
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(amp, t0 + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 4 / dk);
+      o.connect(g); g.connect(mestre); o.start(t0); o.stop(t0 + 4 / dk + 0.05);
+    }
+  }
+}
+
+// Clipe curto do Palhaço em sobreposição (cada um pode pular o seu).
+function tocarClipe(nome) {
+  return new Promise((fim) => {
+    const el = $('#clipe'); const vd = $('#clipe-video');
+    let feito = false;
+    const acaba = () => { if (feito) return; feito = true; clearTimeout(t); vd.pause(); el.hidden = true; vd.removeAttribute('src'); vd.innerHTML = ''; vd.load(); fim(); };
+    vd.innerHTML = `<source src="assets/palhaco/clipes/${nome}.webm" type="video/webm"><source src="assets/palhaco/clipes/${nome}.mp4" type="video/mp4">`;
+    vd.muted = true; vd.playsInline = true; el.hidden = false; el.dataset.clipe = nome;
+    vd.onended = acaba; vd.onerror = acaba;
+    $('#clipe-pular').onclick = acaba;
+    const t = setTimeout(acaba, 8000);
+    vd.load(); const pr = vd.play(); if (pr) pr.catch(() => {});
+    tocarSino(1);
+  });
+}
+function mostrarEventoPalhaco(cid) {
+  if (modalAberto && !modalAberto.auto) { aviso('O Palhaço revelou um Evento: ' + carta(cid).nome + ' (aba Mesa).'); return; }
+  const c = carta(cid);
+  abrirModal(`<p class="modal-sobre"><b>O Palhaço</b> tirou um Evento e revelou a todos:</p>
+    <img class="carta grande" src="${c.img}" alt="${esc(c.nome)}">
+    <p class="modal-nome">${esc(c.nome)} <small>· Evento</small></p><p class="nota">Leiam em voz alta e apliquem.</p>`, null, { auto: true });
+}
+
+// Proposta privada: só o jogador escolhido recebe (v.eu.proposta) e vê Aceitar / Recusar.
+function renderProposta(v) {
+  const el = $('#proposta'); const p = v.eu?.proposta;
+  if (!p) { el.hidden = true; el.dataset.ref = ''; return; }
+  if (el.dataset.ref === p.ref && !el.hidden) return;
+  el.dataset.ref = p.ref; $('#proposta-txt').textContent = `"${p.texto}"`; el.hidden = false;
+  if (!visto.primeira) tocarSino(1);
+  const responder = async (aceitar) => {
+    $('#proposta-sim').disabled = $('#proposta-nao').disabled = true;
+    const r = await S.enviar({ t: 'respostaProposta', ref: p.ref, aceitar });
+    $('#proposta-sim').disabled = $('#proposta-nao').disabled = false;
+    if (!r.ok) aviso(r.erro || 'Não deu.', 'erro'); else { el.hidden = true; aviso(r.msg || (aceitar ? 'Aceito.' : 'Recusado.')); }
+  };
+  $('#proposta-sim').onclick = () => responder(true);
+  $('#proposta-nao').onclick = () => responder(false);
 }
 
 // ===================== DADO / DESTAQUE =====================
@@ -428,7 +537,7 @@ function aoTocarFicha(sala) {
 
 function aoTocarPeao(alvo) {
   if (!V) return;
-  if (alvo === 'palhaco') return abrirModal(`<img class="ficha-img grande-ficha" src="${DADOS.palhaco.frente}" alt="O Palhaço"><p class="nota">O Palhaço nunca ataca. Arraste o peão dele para movê-lo. Susto: quem divide o cômodo com ele perde 5% e rola o Dado.</p>`);
+  if (alvo === 'palhaco') return abrirModal(`<img class="ficha-img grande-ficha" src="${DADOS.palhaco.frente}" alt="O Palhaço"><p class="nota">${V.palhacoAuto ? 'Palhaço automático: no fim de cada rodada ele anda 1 ou 2 cômodos pelas portas atrás de alguém.' : 'Arraste o peão dele para movê-lo.'} ${V.pedagio ? 'Pedágio: quem cruza com ele paga 1 moeda (sem moedas, 15% de sanidade), é mandado para um cômodo sorteado e rola o Dado do Olho (fechado: -10%; aberto: Distorção ou Laço).' : 'Susto: quem divide o cômodo com ele perde 5% e rola o Dado.'}</p>`);
   const j = jogador(alvo); if (!j || j.hospede == null) return;
   const h = DADOS.hospedes[j.hospede];
   abrirModal(`<div class="minha-ficha"><img class="ficha-img" src="${j.habilidadeUsada ? h.verso : h.frente}" alt=""><div>
@@ -462,4 +571,4 @@ function modalRegras() {
 
 // ===================== INÍCIO =====================
 initInicio(); initMesa();
-if (new URLSearchParams(location.search).has('teste')) window.__app = { get V() { return V; }, enviar: (a) => S.enviar(a), get S() { return S; } };
+if (new URLSearchParams(location.search).has('teste')) window.__app = { get V() { return V; }, enviar: (a) => S.enviar(a), get S() { return S; }, get fila() { return { n: filaShow.length, tocando: tocandoShow }; } };

@@ -11,6 +11,7 @@ export class Mapa {
     this.s = 0.2; this.tx = 0; this.ty = 0;
     this.ponteiros = new Map(); this.arrasto = null; this.pinca = null;
     this.peoes = new Map(); this.fichas = new Map();
+    this.animando = new Set(); this.congelados = new Set(); this.ultimaV = null;
     this.camPeoes = mundo.querySelector('#camada-peoes');
     this.camFichas = mundo.querySelector('#camada-fichas');
     const img = mundo.querySelector('#planta');
@@ -117,10 +118,42 @@ export class Mapa {
   }
   moverRemoto(alvo, x, y) {
     if (this.arrasto && this.arrasto.alvo === alvo && this.arrasto.movido) return;
+    if (this.animando.has(alvo) || this.congelados.has(alvo)) return;
     this._posicionar(alvo, x, y);
+  }
+  // Palhaço automático: segura o peão (e quem ele vai pegar) até a animação tocar.
+  reservar(alvo, pegos = []) { this.animando.add(alvo); for (const p of pegos) this.congelados.add(p); }
+  // Desliza o peão pelos pontos (portas/escadas) a velocidade constante. Devolve uma Promise.
+  animar(alvo, pts, pegos = []) {
+    return new Promise((fim) => {
+      const reg = this.peoes.get(alvo);
+      const solta = () => {
+        this.animando.delete(alvo); for (const p of pegos) this.congelados.delete(p);
+        if (reg) reg.el.classList.remove('deslizando');
+        if (this.ultimaV) this.atualizar(this.ultimaV);
+        fim();
+      };
+      if (!reg || !pts || pts.length < 2) return solta();
+      const seg = []; let L = 0;
+      for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(d); L += d; }
+      const dur = Math.max(1400, Math.min(4200, L / 1.1));       // ms
+      reg.el.classList.add('deslizando');
+      const t0 = performance.now();
+      const passo = (agora) => {
+        let u = Math.min(1, (agora - t0) / dur); u = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;   // easeInOut
+        let alvoD = u * L, i = 0;
+        while (i < seg.length - 1 && alvoD > seg[i]) { alvoD -= seg[i]; i++; }
+        const k = seg[i] ? Math.min(1, alvoD / seg[i]) : 1;
+        const x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k, y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k;
+        this._posicionar(alvo, x, y + Math.sin(u * Math.PI * 10) * -18);   // pulinho de sapato grande
+        if (u < 1) requestAnimationFrame(passo); else { this._posicionar(alvo, pts.at(-1)[0], pts.at(-1)[1]); solta(); }
+      };
+      requestAnimationFrame(passo);
+    });
   }
 
   atualizar(v) {
+    this.ultimaV = v;
     const meu = v.eu?.id; const vistos = new Set();
     const fichasDisp = v.fase !== 'lobby';
     for (const [sala, el] of this.fichas) {
@@ -133,7 +166,7 @@ export class Mapa {
       selo.textContent = conhecida ? 'você viu: ' + DADOS.fichas[conhecida].tipo : '';
       selo.hidden = !conhecida; el.classList.toggle('revelada', f.estado === 'revelada');
     }
-    const lista = v.jogadores.filter(j => j.hospede != null && j.pos).map(j => ({ alvo: j.id, img: DADOS.hospedes[j.hospede].peao, nome: j.apelido, corrente: j.corrente, meu: j.id === meu, pos: j.pos, desconectado: !j.conectado }));
+    const lista = v.jogadores.filter(j => j.hospede != null && j.pos).map(j => ({ alvo: j.id, img: DADOS.hospedes[j.hospede].peao, nome: j.apelido, corrente: j.corrente, meu: j.id === meu, pos: j.pos, desconectado: !j.conectado, moedas: v.pedagio && v.fase !== 'lobby' ? j.moedas : null }));
     if (v.fase !== 'lobby') lista.push({ alvo: 'palhaco', img: DADOS.palhaco.peao, nome: 'Palhaço', corrente: false, meu: false, palhaco: true, pos: v.palhaco });
     for (const p of lista) {
       vistos.add(p.alvo);
@@ -141,13 +174,14 @@ export class Mapa {
       if (!reg) {
         const el = document.createElement('div'); el.className = 'peao'; el.dataset.alvo = p.alvo;
         el.style.width = el.style.height = PEAO + 'px';
-        el.innerHTML = `<img class="peao-img" alt="" draggable="false"><img class="peao-corrente" alt="" draggable="false" src="${DADOS.corrente}"><span class="peao-nome"></span>`;
+        el.innerHTML = `<img class="peao-img" alt="" draggable="false"><img class="peao-corrente" alt="" draggable="false" src="${DADOS.corrente}"><span class="peao-nome"></span><span class="peao-moedas" title="moedas"></span>`;
         this.camPeoes.appendChild(el); reg = { el, pos: null }; this.peoes.set(p.alvo, reg);
       }
       const el = reg.el;
       const im = el.querySelector('.peao-img'); if (im.getAttribute('src') !== p.img) im.src = p.img;
       el.querySelector('.peao-nome').textContent = p.nome;
       el.querySelector('.peao-corrente').hidden = !p.corrente;
+      const pm = el.querySelector('.peao-moedas'); pm.hidden = p.moedas == null; pm.textContent = p.moedas ?? '';
       el.classList.toggle('meu', p.meu); el.classList.toggle('palhaco', !!p.palhaco);
       el.classList.toggle('arrastavel', p.meu || !!p.palhaco); el.classList.toggle('fora', !!p.desconectado);
       this.moverRemoto(p.alvo, p.pos.x, p.pos.y);

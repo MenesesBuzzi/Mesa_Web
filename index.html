@@ -133,6 +133,27 @@
   <p id="dado-txt"></p>
 </div>
 
+<!-- ============ PALHAÇO COM IA ============ -->
+<div id="palhaco-fala" class="palhaco-fala" hidden aria-live="polite">
+  <img src="assets/peoes/08_peao_o_palhaco.webp" alt="">
+  <p id="palhaco-fala-txt"></p>
+</div>
+<div id="clipe" class="clipe" hidden>
+  <div class="clipe-caixa">
+    <video id="clipe-video" muted playsinline preload="auto"></video>
+    <button id="clipe-pular" class="bt bt-mini bt-claro">Pular ›</button>
+  </div>
+</div>
+<div id="proposta" class="proposta" hidden role="dialog" aria-label="Proposta do Palhaço">
+  <div class="proposta-caixa">
+    <img src="assets/peoes/08_peao_o_palhaco.webp" alt="">
+    <p class="proposta-sobre">O Palhaço sussurra só para você:</p>
+    <p id="proposta-txt" class="proposta-txt"></p>
+    <div class="linha-bt"><button id="proposta-sim" class="bt bt-vermelho">Aceitar</button><button id="proposta-nao" class="bt bt-claro">Recusar</button></div>
+    <p class="nota">Os outros só sabem que ele sussurrou algo para você (e se você aceitou).</p>
+  </div>
+</div>
+
 <!-- ============ MODAL ============ -->
 <div id="modal" class="modal" hidden>
   <div class="modal-caixa" role="dialog" aria-modal="true">

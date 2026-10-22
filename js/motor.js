@@ -2,6 +2,7 @@
 // Guarda o estado oficial e monta, para cada jogador, uma "visão" com só o que ele pode ver.
 // Não depende de DOM nem de rede: dá para testar no Node (testes/protocolo.test.mjs).
 import { DADOS } from './dados.js';
+import * as PAL from './palhaco.js';
 
 export const NIVEIS = [100, 75, 50, 25, 10];
 export const BARALHOS_COMPRA = ['evento', 'distorcao', 'laco', 'pacto', 'dica', 'sanidade_100', 'sanidade_75', 'sanidade_50', 'sanidade_25', 'sanidade_10'];
@@ -10,6 +11,7 @@ const BARALHOS_SECRETOS = ['pacto', 'sanidade_10'];
 const MAX_JOGADORES = 6;          // jogadores com Hóspede
 const MAX_CONEXOES = 10;          // jogadores + espectadores
 const LOG_MAX = 300;
+export const MOEDAS_INICIAIS = 5;
 
 export function nivelDe(s) { return s >= 76 ? 100 : s >= 51 ? 75 : s >= 26 ? 50 : s >= 11 ? 25 : 10; }
 
@@ -39,7 +41,18 @@ export function novoJogo(codigo, opcoes = {}) {
     relogio: 1, noite: { ativa: false, seq: 0, inicio: 0 },
     destaque: null, dado: null, seq: 0, discosAbertos: false,
     log: [],
+    // módulo opcional "Palhaço com IA": movimento automático, moedas/pedágio, falas, clipes, Eventos e propostas
+    palhacoAuto: true, pedagio: true, shows: [], showSeq: 0, palhacoProxVideo: 3,
   };
+}
+
+// Completa um estado salvo por uma versão anterior da mesa (antes do Palhaço com IA).
+export function normalizar(e) {
+  if (e.palhacoAuto === undefined) e.palhacoAuto = true;
+  if (e.pedagio === undefined) e.pedagio = true;
+  e.shows = e.shows || []; e.showSeq = e.showSeq || 0; e.palhacoProxVideo = e.palhacoProxVideo || (e.relogio + 2);
+  for (const j of Object.values(e.jogadores)) { if (j.moedas === undefined) j.moedas = MOEDAS_INICIAIS; j.imuneAte = j.imuneAte || 0; j.fiado = !!j.fiado; j.proposta = j.proposta || null; }
+  return e;
 }
 
 function registrar(e, texto, para = null) {
@@ -60,6 +73,7 @@ export function entrar(e, { apelido, token, ehHost }) {
     hospede: null, pos: null, corrente: false, habilidadeUsada: false,
     sanidade: 80, tomado: false, mao: [], dicasRecebidas: [], dicasDadas: [], frente: [], fichasPegas: [],
     fichasConhecidas: {}, ultimoNivel: null, dadoPrivado: null, logPriv: 0,
+    moedas: MOEDAS_INICIAIS, imuneAte: 0, fiado: false, proposta: null,
   };
   e.ordem.push(id);
   if (ehHost) e.hostId = id;
@@ -87,9 +101,10 @@ function prepararPartida(e) {
   e.fichas = {};
   M.salas.filter(s => s.ficha).forEach((s, i) => { e.fichas[s.nome] = { ficha: fichas[i], estado: 'oculta', dono: null }; });
   e.palhaco = { x: M.palhacoInicio[0], y: M.palhacoInicio[1] };
+  e.shows = []; e.palhacoProxVideo = 3 + aleat(2);
   e.relogio = 1; e.destaque = null; e.dado = null; e.discosAbertos = false; e.noite = { ativa: false, seq: e.noite.seq, inicio: 0 };
   for (const j of Object.values(e.jogadores)) {
-    Object.assign(j, { sanidade: 80, tomado: false, mao: [], dicasRecebidas: [], dicasDadas: [], frente: [], fichasPegas: [], fichasConhecidas: {}, ultimoNivel: null, dadoPrivado: null, corrente: false, habilidadeUsada: false });
+    Object.assign(j, { sanidade: 80, tomado: false, mao: [], dicasRecebidas: [], dicasDadas: [], frente: [], fichasPegas: [], fichasConhecidas: {}, ultimoNivel: null, dadoPrivado: null, corrente: false, habilidadeUsada: false, moedas: MOEDAS_INICIAIS, imuneAte: 0, fiado: false, proposta: null });
     if (j.hospede != null) { j.pos = posInicial(e, j); darDicasIniciais(e, j); }
   }
 }
@@ -124,7 +139,7 @@ export function acao(e, id, a) {
         if (h == null) { j.pos = null; registrar(e, `${j.apelido} agora só assiste.`); break; }
         j.pos = posInicial(e, j);
         registrar(e, `${j.apelido} escolheu ${nomeH(j)}.`);
-        if (naPartida && primeira) darDicasIniciais(e, j);
+        if (naPartida && primeira) { darDicasIniciais(e, j); j.moedas = MOEDAS_INICIAIS; }
         break;
       }
       case 'iniciar': {
@@ -134,6 +149,8 @@ export function acao(e, id, a) {
         prepararPartida(e); e.fase = 'jogo';
         registrar(e, `A partida começou com ${n} Hóspede${n > 1 ? 's' : ''}. Fichas de Sala e baralhos embaralhados; cada um recebeu 3 Dicas. Relógio no 1.`);
         if (n < 3) registrar(e, 'Aviso: a regra pede de 3 a 6 jogadores.');
+        if (e.pedagio) registrar(e, `Moedas: cada Hóspede começa com ${MOEDAS_INICIAIS} (à vista). Quem cruzar com o Palhaço paga pedágio.`);
+        if (e.palhacoAuto) show(e, [{ t: 'fala', cat: 'inicio', texto: PAL.fala('inicio', _rng) }, { t: 'video', clipe: 'acenando' }]);
         break;
       }
       case 'mover': {
@@ -150,6 +167,10 @@ export function acao(e, id, a) {
           if (depois !== antes && !(a.alvo === 'palhaco' && e.noite.ativa))
             registrar(e, rot ? `${j.apelido} moveu o Palhaço para ${depois || 'fora da planta'}.` : `${quem(j)} foi para ${depois || 'fora da planta'}.`);
           if (a.alvo === 'palhaco' && e.noite.ativa) e.palhacoMovidoNaNoite = true;
+          if (e.pedagio && !e.noite.ativa && depois && depois !== antes) {
+            if (a.alvo === 'palhaco') cobrarSala(e, depois, []);
+            else if (depois === salaEm(e.palhaco.x, e.palhaco.y)) cobrarSala(e, depois, [], [id]);
+          }
         }
         return { ok: true, leve: !a.final };
       }
@@ -296,6 +317,10 @@ export function acao(e, id, a) {
         if (nv === e.relogio) break;
         e.relogio = nv;
         registrar(e, nv === 13 ? `${j.apelido} passou o Relógio da rodada 12: sem fuga, o Apresentador vence.` : `${j.apelido} ${a.delta > 0 ? 'avançou' : 'voltou'} o Relógio para a rodada ${nv}.`);
+        if (a.delta > 0) {
+          if (nv === 13) { if (e.palhacoAuto) show(e, [{ t: 'fala', cat: 'fim', texto: PAL.fala('fim', _rng) }, { t: 'video', clipe: 'chapeu' }]); }
+          else palhacoRodada(e);
+        }
         break;
       }
       case 'noite': {
@@ -317,6 +342,7 @@ export function acao(e, id, a) {
         precisa(Date.now() - e.noite.inicio >= (a.forcar && id === e.hostId ? 0 : 7000), 'Espere um pouco: a noite dura pelo menos 7 segundos.');
         e.noite.ativa = false;
         registrar(e, e.palhacoMovidoNaNoite ? 'Amanheceu. O Palhaço não está onde estava...' : 'Amanheceu. Todos abrem os olhos.');
+        if (e.palhacoMovidoNaNoite && e.pedagio) { const sp = salaEm(e.palhaco.x, e.palhaco.y); if (sp) cobrarSala(e, sp, []); }
         break;
       }
       case 'abrirDiscos': {
@@ -324,6 +350,7 @@ export function acao(e, id, a) {
         e.discosAbertos = true; e.fase = 'fim';
         const res = Object.values(e.jogadores).filter(o => o.hospede != null).map(o => `${quem(o)}: ${o.sanidade}%${o.tomado ? ' · TOMADO' : ''}`).join(' | ');
         registrar(e, `DISCOS ABERTOS. ${res}`);
+        if (e.palhacoAuto) show(e, [{ t: 'fala', cat: 'fim', texto: PAL.fala('fim', _rng) }]);
         break;
       }
       case 'voltarPartida': {
@@ -335,7 +362,8 @@ export function acao(e, id, a) {
       case 'novaPartida': {
         precisa(id === e.hostId, 'Só quem criou a sala começa outra partida.');
         e.fase = 'lobby'; e.discosAbertos = false; e.destaque = null; e.dado = null;
-        for (const o of Object.values(e.jogadores)) Object.assign(o, { mao: [], dicasRecebidas: [], dicasDadas: [], frente: [], fichasPegas: [], fichasConhecidas: {}, sanidade: 80, tomado: false, ultimoNivel: null, corrente: false, habilidadeUsada: false });
+        for (const o of Object.values(e.jogadores)) Object.assign(o, { mao: [], dicasRecebidas: [], dicasDadas: [], frente: [], fichasPegas: [], fichasConhecidas: {}, sanidade: 80, tomado: false, ultimoNivel: null, corrente: false, habilidadeUsada: false, moedas: MOEDAS_INICIAIS, imuneAte: 0, fiado: false, proposta: null });
+        e.shows = [];
         e.fichas = {}; e.baralhos = {}; e.descartes = {};
         registrar(e, 'Nova partida: escolham os Hóspedes. O host inicia quando todos estiverem prontos.');
         break;
@@ -349,10 +377,162 @@ export function acao(e, id, a) {
         registrar(e, `${o.apelido} foi retirado da mesa pelo host.`);
         return { ok: true, expulso: a.alvo };
       }
+      case 'palhacoConfig': {
+        precisa(id === e.hostId, 'Só o host liga e desliga o Palhaço automático.');
+        if ('auto' in a && !!a.auto !== e.palhacoAuto) { e.palhacoAuto = !!a.auto; registrar(e, e.palhacoAuto ? 'O host ligou o Palhaço automático: ele anda sozinho no fim de cada rodada.' : 'O host desligou o Palhaço automático: o Palhaço volta a ser movido à mão.'); }
+        if ('pedagio' in a && !!a.pedagio !== e.pedagio) { e.pedagio = !!a.pedagio; registrar(e, e.pedagio ? 'Pedágio do Palhaço ligado.' : 'Pedágio do Palhaço desligado.'); }
+        break;
+      }
+      case 'respostaProposta': {
+        const pr = j.proposta; precisa(pr && pr.ref === a.ref, 'Essa proposta não existe mais.');
+        j.proposta = null;
+        const def = PAL.PROPOSTAS.find(p => p.id === pr.id);
+        let aceitou = !!a.aceitar, msg = null;
+        if (aceitou && !def.eleg(ctxPal(e), j)) { aceitou = false; msg = 'A oferta não vale mais (algo mudou). Conta como recusa.'; registrar(e, msg, id); }
+        if (aceitou) { msg = def.aplicar(ctxPal(e), j); registrar(e, `Sussurro do Palhaço: "${def.texto}" Você aceitou. ${msg}`, id); avisoNivel(e, j); }
+        else if (!msg) registrar(e, `Sussurro do Palhaço: "${def.texto}" Você recusou.`, id);
+        registrar(e, `${quem(j)} ${aceitou ? 'ACEITOU' : 'recusou'} o sussurro do Palhaço.`);
+        show(e, [{ t: 'fala', cat: aceitou ? 'aceitou' : 'recusou', texto: PAL.fala(aceitou ? 'aceitou' : 'recusou', _rng) }]);
+        return { ok: true, msg: msg || 'Você recusou.' };
+      }
       default: return ERR('Ação desconhecida.');
     }
   } catch (err) { return ERR(err.message); }
   return { ok: true };
+}
+
+
+// ===================== PALHAÇO COM IA (módulo opcional) =====================
+// Um "show" é uma lista de passos que TODOS os navegadores tocam em ordem: fala (balão + sino), mov (peão deslizando
+// pelas portas), dado, video (clipe curto) e evento (carta revelada). Só leva informação pública.
+const SHOWS_MAX = 6;
+function show(e, passos) {
+  if (!passos.length) return;
+  e.shows.push({ seq: ++e.showSeq, passos });
+  if (e.shows.length > SHOWS_MAX) e.shows.splice(0, e.shows.length - SHOWS_MAX);
+}
+function ctxPal(e) {
+  return {
+    e, rnd: _rng, salaEm, quem, comprarDe: (b) => comprarDe(e, b),
+    descartar: (j, c) => { const i = j.mao.indexOf(c); if (i >= 0) { j.mao.splice(i, 1); e.descartes[baralhoDa(c)].push(c); } },
+    registrar: (t, para = null) => registrar(e, t, para),
+  };
+}
+function avisoNivel(e, j) {
+  if (j.sanidade <= 10 && !j.tomado) registrar(e, `Seu Disco está em ${j.sanidade}%: pela regra, compre um Pacto em segredo (botão Pacto).`, j.id);
+}
+// Cobra o pedágio de cada Hóspede (não imune) que está na sala do Palhaço. `so` limita a alguns ids.
+function cobrarSala(e, sala, passos, so = null) {
+  const vitimas = Object.values(e.jogadores).filter(o => o.hospede != null && o.pos && salaEm(o.pos.x, o.pos.y) === sala && (!so || so.includes(o.id)));
+  const pegos = [];
+  for (const o of vitimas) {
+    if (o.imuneAte > e.relogio) { registrar(e, `O Palhaço passou por ${quem(o)} em ${sala} e fingiu não ver.`); continue; }
+    pedagio(e, o, sala, passos, pegos.length); pegos.push(o.id);
+  }
+  if (pegos.length) {
+    passos.push({ t: 'video', clipe: PAL.CLIPES[1 + aleat(PAL.CLIPES.length - 1)] });
+    e.palhacoProxVideo = Math.max(e.palhacoProxVideo, e.relogio + 2);
+    if (!passos.some(p => p.t === 'mov')) show(e, passos.splice(0));   // pedágio fora da rodada automática
+  }
+  return pegos;
+}
+function pedagio(e, j, sala, passos, k) {
+  const preco = j.fiado ? 2 : 1; j.fiado = false;
+  let pagou;
+  if (j.moedas > 0) { const v = Math.min(preco, j.moedas); j.moedas -= v; pagou = `pagou ${v} moeda${v > 1 ? 's' : ''}${preco > 1 ? ' (pedágio em dobro)' : ''} e ficou com ${j.moedas}`; }
+  else { j.sanidade = Math.max(0, j.sanidade - 15); pagou = 'estava sem moedas e pagou com 15% de sanidade (Disco ajustado em segredo)'; }
+  // manda para um cômodo sorteado diferente (nem o atual, nem o Palco)
+  const op = PAL.SALAS.filter(s => s !== sala && s !== 'Palco');
+  const destino = op[aleat(op.length)];
+  const [x, y] = PAL.pontoSorteado(destino, k, _rng); j.pos = { x, y };
+  // penalidade do Dado do Olho
+  const face = aleat(6) + 1; let pen, priv;
+  if (face > 2) { j.sanidade = Math.max(0, j.sanidade - 10); pen = 'perde 10% de sanidade (Disco ajustado em segredo)'; priv = ''; }
+  else if (aleat(2) === 0) { const c = comprarDe(e, 'distorcao'); if (c) j.mao.push(c); pen = 'compra 1 Distorção'; priv = c ? ` Distorção: "${DADOS.cartas[c].nome}".` : ' (o baralho de Distorção acabou)'; }
+  else { const c = comprarDe(e, 'laco'); if (c) j.mao.push(c); j.corrente = true; pen = 'recebe um Laço e a Corrente'; priv = c ? ` Laço: "${DADOS.cartas[c].nome}".` : ''; }
+  registrar(e, `O Palhaço pegou ${quem(j)} em ${sala}! Pedágio: ${pagou}. Foi mandado para ${destino}. Dado do Olho: ${face <= 2 ? 'OLHO ABERTO' : 'olho fechado'} (face ${face}), ${pen}.`);
+  registrar(e, `Pedágio do Palhaço: seu Disco agora está em ${j.sanidade}%.${priv}`, j.id);
+  avisoNivel(e, j);
+  passos.push({ t: 'fala', cat: 'pegar', texto: PAL.fala(j.moedas === 0 && pagou.startsWith('estava') ? 'semMoeda' : 'pegar', _rng, { nome: j.apelido }), alvo: j.id });
+  passos.push({ t: 'dado', face, txt: `Pedágio de ${j.apelido}` });
+}
+
+// Fim da rodada com o Palhaço automático: anda 1 ou 2 cômodos, cobra, às vezes Evento, clipe e proposta.
+export function palhacoRodada(e) {
+  if (e.fase !== 'jogo' || !e.palhacoAuto || e.relogio > 12) return null;
+  const passos = [];
+  // propostas não respondidas expiram
+  for (const o of Object.values(e.jogadores)) if (o.proposta && o.proposta.rodada < e.relogio) { o.proposta = null; registrar(e, `O sussurro para ${quem(o)} se perdeu no escuro.`); }
+  let de = salaEm(e.palhaco.x, e.palhaco.y);
+  if (!de) { de = 'Porão'; const [x, y] = PAL.pontoParada('Porão', null, _rng); e.palhaco = { x, y }; }
+  const esc = PAL.escolherAlvo(e, de, _rng);
+  const passosMax = 1 + aleat(2);
+  let rota = esc.modo === 'despiste' ? [esc.sala] : PAL.caminho(de, esc.sala, _rng);
+  if (esc.modo === 'despiste' && passosMax === 2) { const v = PAL.VIZINHOS[esc.sala].filter(x => x.sala !== de); if (v.length) rota.push(v[aleat(v.length)].sala); }
+  const ocupada = (s) => Object.values(e.jogadores).some(o => o.hospede != null && o.pos && salaEm(o.pos.x, o.pos.y) === s && !(o.imuneAte > e.relogio));
+  const andou = [];
+  for (const s of rota.slice(0, passosMax)) { andou.push(s); if (e.pedagio && ocupada(s)) break; }
+  const alvo = esc.alvo ? e.jogadores[esc.alvo] : null;
+  const salaAlvo = esc.sala;
+  passos.push({ t: 'fala', cat: esc.modo === 'despiste' ? 'despiste' : 'perseguir', texto: PAL.fala(esc.modo === 'despiste' ? 'despiste' : 'perseguir', _rng, { sala: salaAlvo, nome: alvo?.apelido || 'você' }) });
+  const motivo = { proximo: 'o Hóspede mais próximo', rico: 'quem tem mais moedas', sozinho: 'quem está sozinho', despiste: 'ninguém (despiste)' }[esc.modo];
+  if (andou.length) {
+    const pts = PAL.trajeto(e.palhaco, andou, de, _rng);
+    const fim = pts[pts.length - 1]; e.palhaco = { x: fim[0], y: fim[1] };
+    const mov = { t: 'mov', caminho: pts, pegos: [] }; passos.push(mov);
+    const ond = andou[andou.length - 1];
+    registrar(e, `O Palhaço andou ${andou.length} cômodo${andou.length > 1 ? 's' : ''}: ${andou.join(' → ')}. Ele seguia ${motivo}.`);
+    const pegos = e.pedagio ? cobrarSala(e, ond, passos) : [];
+    mov.pegos = pegos;
+    if (!pegos.length && (esc.modo === 'despiste' ? _rng() < 0.3 : _rng() < 0.45)) passos.push({ t: 'fala', cat: 'errar', texto: PAL.fala('errar', _rng) });
+  }
+  else if (e.pedagio && ocupada(de)) cobrarSala(e, de, passos);
+  // Evento sorteado (cerca de 1 rodada em cada 3)
+  if (_rng() < 1 / 3) {
+    const c = comprarDe(e, 'evento');
+    if (c) {
+      e.descartes.evento.push(c);
+      e.destaque = { carta: c, por: 'palhaco', seq: ++e.seq, motivo: 'palhaco' };
+      registrar(e, `O Palhaço tirou uma carta de Evento e revelou a todos: ${DADOS.cartas[c].nome}. Leiam em voz alta e apliquem.`);
+      passos.push({ t: 'fala', cat: 'evento', texto: PAL.fala('evento', _rng) }, { t: 'evento', carta: c });
+    }
+  }
+  // clipe aleatório a cada 2 ou 3 rodadas
+  if (!passos.some(p => p.t === 'video') && e.relogio >= e.palhacoProxVideo) {
+    passos.push({ t: 'video', clipe: PAL.CLIPES[aleat(PAL.CLIPES.length)] });
+    e.palhacoProxVideo = e.relogio + 2 + aleat(2);
+  }
+  // proposta privada (às vezes)
+  if (_rng() < 0.35) palhacoPropor(e, null, passos);
+  show(e, passos);
+  return passos;
+}
+
+// Faz uma proposta privada. alvoId opcional (testes); senão escolhe quem tem menos sanidade, mais moedas ou alguém ao acaso.
+export function palhacoPropor(e, alvoId = null, passos = null, propostaId = null) {
+  const cands = Object.values(e.jogadores).filter(o => o.hospede != null && !o.proposta);
+  if (!cands.length) return null;
+  const ctx = ctxPal(e);
+  const elegiveis = (o) => PAL.PROPOSTAS.filter(p => (!propostaId || p.id === propostaId) && p.eleg(ctx, o));
+  let ordem;
+  if (alvoId) ordem = cands.filter(o => o.id === alvoId);
+  else {
+    const r = _rng(); const emb = embaralhar([...cands]);
+    if (r < 0.4) ordem = emb.sort((a, b) => a.sanidade - b.sanidade);
+    else if (r < 0.7) ordem = emb.sort((a, b) => b.moedas - a.moedas);
+    else ordem = emb;
+  }
+  for (const o of ordem) {
+    const ps = elegiveis(o); if (!ps.length) continue;
+    const p = ps[aleat(ps.length)];
+    o.proposta = { ref: novoId(6), id: p.id, texto: p.texto, rodada: e.relogio };
+    registrar(e, `O Palhaço sussurrou algo para ${quem(o)}.`);
+    registrar(e, `O Palhaço sussurrou no seu ouvido: "${p.texto}" (Aceitar ou Recusar até o fim da rodada.)`, o.id);
+    const passo = { t: 'fala', cat: 'proposta', texto: PAL.fala('proposta', _rng) };
+    if (passos) passos.push(passo); else show(e, [passo]);
+    return o.id;
+  }
+  return null;
 }
 
 // Monta a visão de UM jogador. Só copia valores (nunca objetos internos) e nunca inclui:
@@ -368,6 +548,7 @@ export function visao(e, id) {
       ultimoNivel: o.ultimoNivel, nDicasMao: o.mao.filter(c => c.startsWith('dica/')).length,
       dicasRecebidas: o.dicasRecebidas.map(d => ({ de: d.de })),
       frente: [...o.frente], chaves: o.fichasPegas.length,
+      moedas: o.moedas ?? 0,
     };
     if (e.discosAbertos) v.disco = { sanidade: o.sanidade, tomado: o.tomado };
     return v;
@@ -381,6 +562,7 @@ export function visao(e, id) {
     noite: { ativa: e.noite.ativa, seq: e.noite.seq, desde: e.noite.ativa ? Date.now() - e.noite.inicio : 0, ouvinte: !!(e.noite.ativa && eu && eu.tomado && eu.hospede != null) },
     palhaco: { x: e.palhaco.x, y: e.palhaco.y }, fichas, baralhos,
     destaque: e.destaque ? { ...e.destaque } : null, dado: e.dado ? { ...e.dado } : null, discosAbertos: e.discosAbertos,
+    palhacoAuto: !!e.palhacoAuto, pedagio: !!e.pedagio, shows: (e.shows || []).map(sh => JSON.parse(JSON.stringify(sh))),
     jogadores: e.ordem.filter(k => e.jogadores[k]).map(k => pub(e.jogadores[k])),
     log: e.log.filter(l => l.para === null || l.para === id).slice(-120).map(l => ({ n: l.n, t: l.t, texto: l.texto, privado: l.para !== null })),
     eu: eu ? {
@@ -389,6 +571,7 @@ export function visao(e, id) {
       dicasDadas: eu.dicasDadas.map(d => ({ carta: d.carta, para: d.para, destino: d.destino })),
       fichasConhecidas: { ...eu.fichasConhecidas }, fichasPegas: [...eu.fichasPegas],
       dadoPrivado: eu.dadoPrivado ? { ...eu.dadoPrivado } : null, ehHost: eu.id === e.hostId,
+      proposta: eu.proposta ? { ref: eu.proposta.ref, texto: eu.proposta.texto } : null, imuneAte: eu.imuneAte || 0, fiado: !!eu.fiado,
     } : null,
   };
 }
