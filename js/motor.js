@@ -43,6 +43,8 @@ export function novoJogo(codigo, opcoes = {}) {
     log: [],
     // módulo opcional "Palhaço com IA": movimento automático, moedas/pedágio, falas, clipes, Eventos e propostas
     palhacoAuto: true, pedagio: true, shows: [], showSeq: 0, palhacoProxVideo: 3,
+    // turnos: ordem dos jogadores, quem está na vez e o que já fez (só passos públicos)
+    turno: null, turnoAleatorio: false,
   };
 }
 
@@ -51,8 +53,105 @@ export function normalizar(e) {
   if (e.palhacoAuto === undefined) e.palhacoAuto = true;
   if (e.pedagio === undefined) e.pedagio = true;
   e.shows = e.shows || []; e.showSeq = e.showSeq || 0; e.palhacoProxVideo = e.palhacoProxVideo || (e.relogio + 2);
-  for (const j of Object.values(e.jogadores)) { if (j.moedas === undefined) j.moedas = MOEDAS_INICIAIS; j.imuneAte = j.imuneAte || 0; j.fiado = !!j.fiado; j.proposta = j.proposta || null; }
+  for (const j of Object.values(e.jogadores)) { if (j.moedas === undefined) j.moedas = MOEDAS_INICIAIS; j.imuneAte = j.imuneAte || 0; j.fiado = !!j.fiado; j.proposta = j.proposta || null; j.gastos = j.gastos || []; }
+  if (e.turnoAleatorio === undefined) e.turnoAleatorio = false;
+  if (e.fase !== 'lobby' && !e.turno) iniciarTurnos(e);
   return e;
+}
+
+// ===================== TURNOS =====================
+// Regra (regras.md, seção 6): na sua vez, Sussurro (opcional, 1 Dica) → Movimento (até 2 Salas, ou descansar +5%)
+// → Explorar (Ficha) → Evento (1) → Nível (1 Sanidade) → Reabastecer (Dicas até 3). Quando todos jogarem, o Relógio avança.
+// Comprar carta não custa sanidade nem moedas: cada compra é um passo da vez.
+export const feitoVazio = () => ({ dica: 0, salas: 0, descanso: false, ficha: 0, evento: 0, nivel: 0, dicas: 0, distorcao: 0, laco: 0 });
+export function daVez(e) { const t = e.turno; return t && t.ordem.length ? t.ordem[t.vez] : null; }
+function iniciarTurnos(e) {
+  const ordem = e.ordem.filter(k => e.jogadores[k] && e.jogadores[k].hospede != null);
+  if (e.turnoAleatorio) embaralhar(ordem);
+  e.turno = { ordem, vez: 0, rodada: e.relogio, seq: (e.turno?.seq || 0) + 1, feito: feitoVazio() };
+}
+function tirarDaOrdem(e, id) {
+  const t = e.turno; if (!t) return; const i = t.ordem.indexOf(id); if (i < 0) return;
+  t.ordem.splice(i, 1);
+  if (i < t.vez) t.vez--;
+  else if (i === t.vez) { t.feito = feitoVazio(); t.seq++; }
+  if (t.vez >= t.ordem.length) t.vez = 0;
+}
+function resumoFeito(f) {
+  const p = [];
+  if (f.dica) p.push(`deu ${f.dica} Dica${f.dica > 1 ? 's' : ''}`);
+  if (f.descanso) p.push('descansou');
+  if (f.salas) p.push(`andou ${f.salas} Sala${f.salas > 1 ? 's' : ''}`);
+  if (f.ficha) p.push('olhou Ficha');
+  if (f.evento) p.push(`${f.evento} Evento${f.evento > 1 ? 's' : ''}`);
+  if (f.nivel) p.push(`${f.nivel} Sanidade`);
+  if (f.dicas) p.push(`comprou ${f.dicas} Dica${f.dicas > 1 ? 's' : ''}`);
+  if (f.distorcao) p.push(`${f.distorcao} Distorção`);
+  if (f.laco) p.push(`${f.laco} Laço`);
+  return p.length ? p.join(', ') : 'nada registrado pela mesa';
+}
+function avancarVez(e) {
+  const t = e.turno; t.vez++; t.feito = feitoVazio(); t.seq++;
+  if (t.vez >= t.ordem.length) {
+    t.vez = 0;
+    registrar(e, 'Todos passaram a vez: a rodada acabou e o Relógio avança sozinho.');
+    avancarRelogio(e, 'A mesa', 1);
+  } else registrar(e, `Vez de ${quem(e.jogadores[daVez(e)])}.`);
+}
+function avancarRelogio(e, autor, delta) {
+  const nv = Math.max(1, Math.min(13, e.relogio + (Number(delta) || 0)));
+  if (nv === e.relogio) return;
+  e.relogio = nv;
+  registrar(e, nv === 13 ? `${autor} passou o Relógio da rodada 12: sem fuga, o Apresentador vence.` : `${autor} ${delta > 0 ? 'avançou' : 'voltou'} o Relógio para a rodada ${nv}.`);
+  if (delta > 0) {
+    if (nv === 13) { if (e.palhacoAuto) show(e, [{ t: 'fala', cat: 'fim', texto: PAL.fala('fim', _rng) }, { t: 'video', clipe: 'chapeu' }]); }
+    else {
+      palhacoRodada(e);
+      if (e.turno && e.turno.ordem.length) {
+        e.turno.vez = 0; e.turno.rodada = nv; e.turno.feito = feitoVazio(); e.turno.seq++;
+        registrar(e, `Rodada ${nv}: vez de ${quem(e.jogadores[daVez(e)])}. (Pela regra, agora é a Noite: alguém toque em Noite.)`);
+      }
+    }
+  }
+}
+// Histórico privado "Seus últimos gastos" (só o dono recebe; nunca entra na visão dos outros).
+function gasto(j, txt) { (j.gastos ||= []).push({ t: Date.now(), txt }); if (j.gastos.length > 15) j.gastos.splice(0, j.gastos.length - 15); }
+function difTxt(mo, sa) {
+  const p = [];
+  if (mo) p.push(`${mo > 0 ? '+' : '−'}${Math.abs(mo)} moeda${Math.abs(mo) > 1 ? 's' : ''}`);
+  if (sa) p.push(`${sa > 0 ? '+' : '−'}${Math.abs(sa)}% sanidade`);
+  return p.join(' · ');
+}
+// O que a compra "custou" pela regra. Vai só para quem comprou (resposta privada).
+function custoCompra(e, j, b, naVez, foraDeQuem) {
+  const f = e.turno?.feito || feitoVazio();
+  const rot = DADOS.baralhos[b].rotulo;
+  const linhas = []; let titulo = 'Grátis pela regra'; let acima = false;
+  if (foraDeQuem) { titulo = 'Fora da sua vez'; linhas.push(`É a vez de ${foraDeQuem}. A mesa deixou comprar, mas combinem.`); }
+  if (b === 'evento') {
+    if (naVez) { if (f.evento === 1) { titulo = 'Grátis nesta vez'; linhas.push('Passo 4 (Evento): 1/1 usado'); } else { acima = true; titulo = 'Acima da regra'; linhas.push(`${f.evento}º Evento nesta vez (a regra pede 1 por turno)`); } }
+    linhas.push('Leia em voz alta e descarte.');
+  } else if (b.startsWith('sanidade_') && b !== 'sanidade_10') {
+    if (naVez) { if (f.nivel === 1) { titulo = '1ª compra da vez'; linhas.push('Passo 5 (Nível): 1/1 usado'); } else { acima = true; titulo = 'Acima da regra'; linhas.push(`${f.nivel}ª Sanidade nesta vez (a regra pede 1)`); } }
+    const meu = j.tomado ? 25 : Math.max(25, nivelDe(j.sanidade));
+    if (Number(b.split('_')[1]) !== meu) linhas.push(`Atenção: pelo seu Disco, o baralho certo é o de ${meu}%.`);
+    linhas.push('Comprar não muda o Disco: role o Dado e aplique a alternativa.');
+  } else if (b === 'dica') {
+    const k = j.mao.filter(c => c.startsWith('dica/')).length;
+    if (naVez) titulo = k <= 3 ? 'Grátis nesta vez' : 'Acima da regra';
+    if (k > 3) acima = true;
+    linhas.push(`Reabastecer (passo 6): ${k}/3 Dicas na mão${k > 3 ? ' · acima de 3' : ''}`);
+  } else if (b === 'distorcao') {
+    const nv = nivelDe(j.sanidade); const k = j.mao.filter(c => c.startsWith('distorcao/')).length;
+    const max = nv === 75 ? 1 : nv === 50 || nv === 25 ? 2 : 0;
+    if (max) linhas.push(`Nível ${nv}%: no fim do turno, 1 Distorção (máx. ${max} na mão) · você tem ${k}`); else linhas.push('Distorção vem do nível 75%/50% (fim do turno), do Dado do pedágio ou de cartas.');
+    if (max && k > max) { acima = true; titulo = 'Acima do máximo'; }
+  } else if (b === 'laco') linhas.push('Laço vem da Armadilha (passo 3), do pedágio ou de cartas. Ponha a Corrente no peão.');
+  else if (b === 'pacto') linhas.push('Pacto: só ao chegar a 10% ou menos. Agora você está Tomado (segredo).');
+  else if (b === 'sanidade_10') linhas.push('Sanidade 10%: só para Tomados (a Noite dá 1).');
+  linhas.push('Sem custo em sanidade, moedas ou ação.');
+  const secreto = BARALHOS_SECRETOS.includes(b);
+  return { titulo, linhas, acima, baralho: rot, restante: secreto ? null : e.baralhos[b].length, foraDaVez: !!foraDeQuem };
 }
 
 function registrar(e, texto, para = null) {
@@ -73,7 +172,7 @@ export function entrar(e, { apelido, token, ehHost }) {
     hospede: null, pos: null, corrente: false, habilidadeUsada: false,
     sanidade: 80, tomado: false, mao: [], dicasRecebidas: [], dicasDadas: [], frente: [], fichasPegas: [],
     fichasConhecidas: {}, ultimoNivel: null, dadoPrivado: null, logPriv: 0,
-    moedas: MOEDAS_INICIAIS, imuneAte: 0, fiado: false, proposta: null,
+    moedas: MOEDAS_INICIAIS, imuneAte: 0, fiado: false, proposta: null, gastos: [],
   };
   e.ordem.push(id);
   if (ehHost) e.hostId = id;
@@ -104,7 +203,7 @@ function prepararPartida(e) {
   e.shows = []; e.palhacoProxVideo = 3 + aleat(2);
   e.relogio = 1; e.destaque = null; e.dado = null; e.discosAbertos = false; e.noite = { ativa: false, seq: e.noite.seq, inicio: 0 };
   for (const j of Object.values(e.jogadores)) {
-    Object.assign(j, { sanidade: 80, tomado: false, mao: [], dicasRecebidas: [], dicasDadas: [], frente: [], fichasPegas: [], fichasConhecidas: {}, ultimoNivel: null, dadoPrivado: null, corrente: false, habilidadeUsada: false, moedas: MOEDAS_INICIAIS, imuneAte: 0, fiado: false, proposta: null });
+    Object.assign(j, { sanidade: 80, tomado: false, mao: [], dicasRecebidas: [], dicasDadas: [], frente: [], fichasPegas: [], fichasConhecidas: {}, ultimoNivel: null, dadoPrivado: null, corrente: false, habilidadeUsada: false, moedas: MOEDAS_INICIAIS, imuneAte: 0, fiado: false, proposta: null, gastos: [] });
     if (j.hospede != null) { j.pos = posInicial(e, j); darDicasIniciais(e, j); }
   }
 }
@@ -136,20 +235,21 @@ export function acao(e, id, a) {
         if (naPartida && j.hospede != null && h !== j.hospede) precisa(false, 'Com a partida em andamento não dá para trocar de Hóspede.');
         const primeira = j.hospede == null && h != null;
         j.hospede = h;
-        if (h == null) { j.pos = null; registrar(e, `${j.apelido} agora só assiste.`); break; }
+        if (h == null) { j.pos = null; tirarDaOrdem(e, id); registrar(e, `${j.apelido} agora só assiste.`); break; }
         j.pos = posInicial(e, j);
         registrar(e, `${j.apelido} escolheu ${nomeH(j)}.`);
-        if (naPartida && primeira) { darDicasIniciais(e, j); j.moedas = MOEDAS_INICIAIS; }
+        if (naPartida && primeira) { darDicasIniciais(e, j); j.moedas = MOEDAS_INICIAIS; if (e.turno && !e.turno.ordem.includes(id)) { e.turno.ordem.push(id); registrar(e, `${j.apelido} entrou no fim da ordem dos turnos.`); } }
         break;
       }
       case 'iniciar': {
         precisa(id === e.hostId, 'Só quem criou a sala inicia a partida.');
         const n = Object.values(e.jogadores).filter(o => o.hospede != null).length;
         precisa(n >= 1, 'Ninguém escolheu Hóspede ainda.');
-        prepararPartida(e); e.fase = 'jogo';
+        prepararPartida(e); e.fase = 'jogo'; iniciarTurnos(e);
         registrar(e, `A partida começou com ${n} Hóspede${n > 1 ? 's' : ''}. Fichas de Sala e baralhos embaralhados; cada um recebeu 3 Dicas. Relógio no 1.`);
         if (n < 3) registrar(e, 'Aviso: a regra pede de 3 a 6 jogadores.');
         if (e.pedagio) registrar(e, `Moedas: cada Hóspede começa com ${MOEDAS_INICIAIS} (à vista). Quem cruzar com o Palhaço paga pedágio.`);
+        registrar(e, `Ordem dos turnos${e.turnoAleatorio ? ' (sorteada)' : ' (pela entrada)'}: ${e.turno.ordem.map(k => e.jogadores[k].apelido).join(' → ')}. Vez de ${quem(e.jogadores[daVez(e)])}.`);
         if (e.palhacoAuto) show(e, [{ t: 'fala', cat: 'inicio', texto: PAL.fala('inicio', _rng) }, { t: 'video', clipe: 'acenando' }]);
         break;
       }
@@ -162,23 +262,38 @@ export function acao(e, id, a) {
         else { precisa(temH && (a.alvo == null || a.alvo === id), 'Você só move o seu peão.'); alvo = j.pos; rot = null; }
         const antes = salaEm(alvo.x, alvo.y);
         alvo.x = x; alvo.y = y;
+        let fora = null;
         if (a.final) {
           const depois = salaEm(x, y);
+          const vez = daVez(e);
+          if (!rot && depois !== antes && vez) {
+            if (vez === id) { const d = antes && depois ? PAL.distancias(antes)[depois] : 1; e.turno.feito.salas += Number.isFinite(d) ? d : 1; }
+            else fora = `É a vez de ${quem(e.jogadores[vez])}. A mesa deixou mover, mas combinem.`;
+          }
           if (depois !== antes && !(a.alvo === 'palhaco' && e.noite.ativa))
-            registrar(e, rot ? `${j.apelido} moveu o Palhaço para ${depois || 'fora da planta'}.` : `${quem(j)} foi para ${depois || 'fora da planta'}.`);
+            registrar(e, rot ? `${j.apelido} moveu o Palhaço para ${depois || 'fora da planta'}.` : `${quem(j)} foi para ${depois || 'fora da planta'}${fora ? ' (fora da vez)' : ''}.`);
           if (a.alvo === 'palhaco' && e.noite.ativa) e.palhacoMovidoNaNoite = true;
           if (e.pedagio && !e.noite.ativa && depois && depois !== antes) {
             if (a.alvo === 'palhaco') cobrarSala(e, depois, []);
             else if (depois === salaEm(e.palhaco.x, e.palhaco.y)) cobrarSala(e, depois, [], [id]);
           }
         }
-        return { ok: true, leve: !a.final };
+        return fora ? { ok: true, leve: !a.final, aviso: fora } : { ok: true, leve: !a.final };
       }
       case 'comprar': {
         precisa(naPartida && temH, 'Escolha um Hóspede e espere a partida começar.');
         const b = a.baralho; precisa(BARALHOS_COMPRA.includes(b), 'Baralho inválido.');
         const c = comprarDe(e, b); precisa(c, `O baralho de ${DADOS.baralhos[b].rotulo} acabou.`);
         j.mao.push(c);
+        const secreta = BARALHOS_SECRETOS.includes(b);
+        const vez = daVez(e); const naVez = vez === id; const foraDe = vez && !naVez && !secreta && !e.noite.ativa ? quem(e.jogadores[vez]) : null;
+        if (naVez && !secreta) {
+          const f = e.turno.feito;
+          if (b === 'evento') f.evento++; else if (b === 'dica') f.dicas++; else if (b === 'distorcao') f.distorcao++; else if (b === 'laco') f.laco++; else if (b.startsWith('sanidade_')) f.nivel++;
+        }
+        const custo = custoCompra(e, j, b, naVez && !secreta, foraDe);
+        gasto(j, `Comprou ${DADOS.cartas[c].nome} (${DADOS.baralhos[b].rotulo}) · ${custo.titulo.toLowerCase()}${custo.acima ? '' : ''}`);
+        const sufixo = foraDe ? ' (fora da vez)' : '';
         if (b === 'pacto') {
           // Pacto é em segredo: nada no log público. O próprio jogador é marcado Tomado.
           j.tomado = true;
@@ -187,9 +302,9 @@ export function acao(e, id, a) {
           registrar(e, `Você comprou 1 carta de Sanidade 10% em segredo.`, id);
         } else if (b.startsWith('sanidade_')) {
           j.ultimoNivel = Number(b.split('_')[1]);
-          registrar(e, `${quem(j)} comprou 1 carta de Sanidade do nível ${j.ultimoNivel}%.`);
-        } else registrar(e, `${quem(j)} comprou 1 carta de ${DADOS.baralhos[b].rotulo}.`);
-        return { ok: true, carta: c };
+          registrar(e, `${quem(j)} comprou 1 carta de Sanidade do nível ${j.ultimoNivel}%${sufixo}.`);
+        } else registrar(e, `${quem(j)} comprou 1 carta de ${DADOS.baralhos[b].rotulo}${sufixo}.`);
+        return { ok: true, carta: c, custo };
       }
       case 'comprarNivel': {
         precisa(naPartida && temH, 'A partida ainda não começou.');
@@ -221,6 +336,7 @@ export function acao(e, id, a) {
         const ref = novoId(6);
         alvo.dicasRecebidas.push({ ref, carta: a.carta, de: id });
         j.dicasDadas.push({ ref, carta: a.carta, para: alvo.id, destino: 'pendente' });
+        if (daVez(e) === id) e.turno.feito.dica++;
         registrar(e, `${quem(j)} deu 1 Dica virada para baixo a ${quem(alvo)}.`);
         break;
       }
@@ -248,6 +364,7 @@ export function acao(e, id, a) {
         const medium = DADOS.hospedes[j.hospede].id === 'a_medium' && a.medium;
         precisa(aqui || medium, `Seu peão precisa estar em ${a.sala} para olhar a Ficha.`);
         j.fichasConhecidas[a.sala] = f.ficha;
+        if (daVez(e) === id && aqui) e.turno.feito.ficha++;
         registrar(e, medium && !aqui ? `${quem(j)} usou a habilidade da Médium e olhou em segredo a Ficha de ${a.sala}.` : `${quem(j)} olhou em segredo a Ficha de ${a.sala}.`);
         registrar(e, `Ficha de ${a.sala}: ${DADOS.fichas[f.ficha].tipo.toUpperCase()}. Você decide se conta a verdade.`, id);
         return { ok: true, ficha: f.ficha };
@@ -290,7 +407,9 @@ export function acao(e, id, a) {
       case 'sanidade': {
         precisa(temH, 'Escolha um Hóspede.');
         let v = Math.round(Number(a.valor) / 5) * 5; precisa(Number.isFinite(v), 'Valor inválido.');
+        const antesS = j.sanidade;
         j.sanidade = Math.max(0, Math.min(100, v));
+        if (j.sanidade !== antesS) gasto(j, `Você ajustou o Disco: ${difTxt(0, j.sanidade - antesS)} (agora ${j.sanidade}%)`);
         break;   // sem log público
       }
       case 'tomado': {
@@ -313,14 +432,39 @@ export function acao(e, id, a) {
       }
       case 'relogio': {
         precisa(naPartida, 'A partida ainda não começou.');
-        const nv = Math.max(1, Math.min(13, e.relogio + (Number(a.delta) || 0)));
-        if (nv === e.relogio) break;
-        e.relogio = nv;
-        registrar(e, nv === 13 ? `${j.apelido} passou o Relógio da rodada 12: sem fuga, o Apresentador vence.` : `${j.apelido} ${a.delta > 0 ? 'avançou' : 'voltou'} o Relógio para a rodada ${nv}.`);
-        if (a.delta > 0) {
-          if (nv === 13) { if (e.palhacoAuto) show(e, [{ t: 'fala', cat: 'fim', texto: PAL.fala('fim', _rng) }, { t: 'video', clipe: 'chapeu' }]); }
-          else palhacoRodada(e);
-        }
+        precisa(id === e.hostId, 'Só o host mexe no Relógio à mão. Os outros usam "Passar a vez": quando todos passam, a rodada avança sozinha.');
+        avancarRelogio(e, j.apelido, Number(a.delta) || 0);
+        break;
+      }
+      case 'passarVez': {
+        precisa(naPartida && e.turno && e.turno.ordem.length, 'Não há turnos em andamento.');
+        precisa(!e.noite.ativa, 'Espere amanhecer para passar a vez.');
+        const atual = daVez(e);
+        precisa(id === atual || id === e.hostId, 'Só quem está na vez (ou o host) passa a vez.');
+        if (a.seq != null) precisa(Number(a.seq) === e.turno.seq, 'A vez já mudou.');
+        const ja = e.jogadores[atual];
+        registrar(e, `${quem(ja)} passou a vez${id !== atual ? ` (o host ${j.apelido} passou por ${ja.apelido})` : ''}. Fez: ${resumoFeito(e.turno.feito)}.`);
+        avancarVez(e);
+        break;
+      }
+      case 'descansar': {
+        precisa(naPartida && temH, 'A partida ainda não começou.');
+        precisa(daVez(e) === id, 'Descansar é na sua vez, no lugar do Movimento.');
+        const f = e.turno.feito; precisa(!f.descanso, 'Você já descansou nesta vez.');
+        precisa(!f.salas, 'Você já se moveu nesta vez: descansar é no lugar do Movimento.');
+        f.descanso = true; const antesS = j.sanidade; j.sanidade = Math.min(100, j.sanidade + 5);
+        gasto(j, `Descansou: ${difTxt(0, j.sanidade - antesS) || 'sanidade já no máximo'}`);
+        registrar(e, `${quem(j)} descansou em vez de se mover (+5% no Disco, pela regra).`);
+        break;
+      }
+      case 'ordemTurnos': {
+        precisa(id === e.hostId, 'Só o host muda a ordem dos turnos.');
+        if (e.fase === 'lobby') { e.turnoAleatorio = !!a.embaralhar; registrar(e, e.turnoAleatorio ? 'A ordem dos turnos será sorteada ao iniciar.' : 'A ordem dos turnos será a da entrada na sala.'); break; }
+        precisa(e.turno && e.turno.vez === 0 && !Object.values(e.turno.feito).some(Boolean), 'Só dá para mudar a ordem no começo da rodada (antes do primeiro jogador agir).');
+        const nova = e.ordem.filter(k => e.jogadores[k] && e.jogadores[k].hospede != null);
+        if (a.embaralhar) embaralhar(nova);
+        e.turnoAleatorio = !!a.embaralhar; e.turno.ordem = nova; e.turno.seq++;
+        registrar(e, `${a.embaralhar ? 'O host sorteou' : 'O host voltou'} a ordem dos turnos: ${nova.map(k => e.jogadores[k].apelido).join(' → ')}. Vez de ${quem(e.jogadores[daVez(e)])}.`);
         break;
       }
       case 'noite': {
@@ -332,7 +476,7 @@ export function acao(e, id, a) {
         for (const o of Object.values(e.jogadores)) {
           if (o.hospede == null || !o.tomado) continue;
           const c = comprarDe(e, 'sanidade_10');
-          if (c) { o.mao.push(c); registrar(e, 'Você ouviu o Apresentador. Recebeu em segredo 1 carta de Sanidade 10% (veja na sua mão). Você pode mover o Palhaço 1 cômodo agora.', o.id); }
+          if (c) { o.mao.push(c); gasto(o, 'Noite: recebeu 1 carta de Sanidade 10% (segredo)'); registrar(e, 'Você ouviu o Apresentador. Recebeu em segredo 1 carta de Sanidade 10% (veja na sua mão). Você pode mover o Palhaço 1 cômodo agora.', o.id); }
           else registrar(e, 'Você ouviu o Apresentador, mas o baralho de Sanidade 10% acabou.', o.id);
         }
         break;
@@ -363,7 +507,8 @@ export function acao(e, id, a) {
         precisa(id === e.hostId, 'Só quem criou a sala começa outra partida.');
         e.fase = 'lobby'; e.discosAbertos = false; e.destaque = null; e.dado = null;
         for (const o of Object.values(e.jogadores)) Object.assign(o, { mao: [], dicasRecebidas: [], dicasDadas: [], frente: [], fichasPegas: [], fichasConhecidas: {}, sanidade: 80, tomado: false, ultimoNivel: null, corrente: false, habilidadeUsada: false, moedas: MOEDAS_INICIAIS, imuneAte: 0, fiado: false, proposta: null });
-        e.shows = [];
+        e.shows = []; e.turno = null;
+        for (const o of Object.values(e.jogadores)) o.gastos = [];
         e.fichas = {}; e.baralhos = {}; e.descartes = {};
         registrar(e, 'Nova partida: escolham os Hóspedes. O host inicia quando todos estiverem prontos.');
         break;
@@ -373,6 +518,7 @@ export function acao(e, id, a) {
         const o = e.jogadores[a.alvo]; precisa(o, 'Jogador não encontrado.');
         // as cartas voltam para o descarte de cada baralho
         for (const c of [...o.mao, ...o.frente, ...o.dicasRecebidas.map(d => d.carta)]) e.descartes[baralhoDa(c)]?.push(c);
+        tirarDaOrdem(e, a.alvo);
         delete e.jogadores[a.alvo]; e.ordem = e.ordem.filter(x => x !== a.alvo);
         registrar(e, `${o.apelido} foi retirado da mesa pelo host.`);
         return { ok: true, expulso: a.alvo };
@@ -389,7 +535,7 @@ export function acao(e, id, a) {
         const def = PAL.PROPOSTAS.find(p => p.id === pr.id);
         let aceitou = !!a.aceitar, msg = null;
         if (aceitou && !def.eleg(ctxPal(e), j)) { aceitou = false; msg = 'A oferta não vale mais (algo mudou). Conta como recusa.'; registrar(e, msg, id); }
-        if (aceitou) { msg = def.aplicar(ctxPal(e), j); registrar(e, `Sussurro do Palhaço: "${def.texto}" Você aceitou. ${msg}`, id); avisoNivel(e, j); }
+        if (aceitou) { const m0 = j.moedas, s0 = j.sanidade; msg = def.aplicar(ctxPal(e), j); const dt = difTxt(j.moedas - m0, j.sanidade - s0); gasto(j, `Sussurro do Palhaço aceito${dt ? ': ' + dt : ''}`); registrar(e, `Sussurro do Palhaço: "${def.texto}" Você aceitou. ${msg}`, id); avisoNivel(e, j); }
         else if (!msg) registrar(e, `Sussurro do Palhaço: "${def.texto}" Você recusou.`, id);
         registrar(e, `${quem(j)} ${aceitou ? 'ACEITOU' : 'recusou'} o sussurro do Palhaço.`);
         show(e, [{ t: 'fala', cat: aceitou ? 'aceitou' : 'recusou', texto: PAL.fala(aceitou ? 'aceitou' : 'recusou', _rng) }]);
@@ -437,6 +583,7 @@ function cobrarSala(e, sala, passos, so = null) {
   return pegos;
 }
 function pedagio(e, j, sala, passos, k) {
+  const m0 = j.moedas, s0 = j.sanidade;
   const preco = j.fiado ? 2 : 1; j.fiado = false;
   let pagou;
   if (j.moedas > 0) { const v = Math.min(preco, j.moedas); j.moedas -= v; pagou = `pagou ${v} moeda${v > 1 ? 's' : ''}${preco > 1 ? ' (pedágio em dobro)' : ''} e ficou com ${j.moedas}`; }
@@ -452,6 +599,7 @@ function pedagio(e, j, sala, passos, k) {
   else { const c = comprarDe(e, 'laco'); if (c) j.mao.push(c); j.corrente = true; pen = 'recebe um Laço e a Corrente'; priv = c ? ` Laço: "${DADOS.cartas[c].nome}".` : ''; }
   registrar(e, `O Palhaço pegou ${quem(j)} em ${sala}! Pedágio: ${pagou}. Foi mandado para ${destino}. Dado do Olho: ${face <= 2 ? 'OLHO ABERTO' : 'olho fechado'} (face ${face}), ${pen}.`);
   registrar(e, `Pedágio do Palhaço: seu Disco agora está em ${j.sanidade}%.${priv}`, j.id);
+  gasto(j, `Pedágio do Palhaço em ${sala}: ${difTxt(j.moedas - m0, j.sanidade - s0) || 'sem perda'}${face <= 2 ? ' · ' + pen : ''}`);
   avisoNivel(e, j);
   passos.push({ t: 'fala', cat: 'pegar', texto: PAL.fala(j.moedas === 0 && pagou.startsWith('estava') ? 'semMoeda' : 'pegar', _rng, { nome: j.apelido }), alvo: j.id });
   passos.push({ t: 'dado', face, txt: `Pedágio de ${j.apelido}` });
@@ -562,6 +710,8 @@ export function visao(e, id) {
     noite: { ativa: e.noite.ativa, seq: e.noite.seq, desde: e.noite.ativa ? Date.now() - e.noite.inicio : 0, ouvinte: !!(e.noite.ativa && eu && eu.tomado && eu.hospede != null) },
     palhaco: { x: e.palhaco.x, y: e.palhaco.y }, fichas, baralhos,
     destaque: e.destaque ? { ...e.destaque } : null, dado: e.dado ? { ...e.dado } : null, discosAbertos: e.discosAbertos,
+    turno: e.turno && e.fase !== 'lobby' ? { ordem: [...e.turno.ordem], vez: e.turno.vez, daVez: daVez(e), rodada: e.turno.rodada, seq: e.turno.seq, feito: { ...e.turno.feito } } : null,
+    turnoAleatorio: !!e.turnoAleatorio,
     palhacoAuto: !!e.palhacoAuto, pedagio: !!e.pedagio, shows: (e.shows || []).map(sh => JSON.parse(JSON.stringify(sh))),
     jogadores: e.ordem.filter(k => e.jogadores[k]).map(k => pub(e.jogadores[k])),
     log: e.log.filter(l => l.para === null || l.para === id).slice(-120).map(l => ({ n: l.n, t: l.t, texto: l.texto, privado: l.para !== null })),
@@ -572,6 +722,7 @@ export function visao(e, id) {
       fichasConhecidas: { ...eu.fichasConhecidas }, fichasPegas: [...eu.fichasPegas],
       dadoPrivado: eu.dadoPrivado ? { ...eu.dadoPrivado } : null, ehHost: eu.id === e.hostId,
       proposta: eu.proposta ? { ref: eu.proposta.ref, texto: eu.proposta.texto } : null, imuneAte: eu.imuneAte || 0, fiado: !!eu.fiado,
+      gastos: (eu.gastos || []).slice(-8).map(g => ({ t: g.t, txt: g.txt })),
     } : null,
   };
 }

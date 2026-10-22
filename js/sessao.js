@@ -16,7 +16,7 @@ export function salaSalva() {
 }
 
 // Respostas privadas: só campos que pertencem a quem pediu.
-function resposta(r) { const o = { ok: r.ok }; if (r.erro) o.erro = r.erro; if (r.carta) o.carta = r.carta; if (r.ficha) o.ficha = r.ficha; if (r.face) o.face = r.face; if (r.msg) o.msg = r.msg; return o; }
+function resposta(r) { const o = { ok: r.ok }; if (r.erro) o.erro = r.erro; if (r.carta) o.carta = r.carta; if (r.ficha) o.ficha = r.ficha; if (r.face) o.face = r.face; if (r.msg) o.msg = r.msg; if (r.custo) o.custo = r.custo; if (r.aviso) o.aviso = r.aviso; return o; }
 
 export class SessaoHost {
   constructor({ apelido, moderador, salvo, aoVisao, aoPos, aoAviso }) {

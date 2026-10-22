@@ -39,7 +39,7 @@
         <button id="bt-entrar" class="bt bt-turquesa">Entrar na sala</button>
       </div>
     </div>
-    <p class="nota">3 a 6 jogadores · voz pelo Discord · nada é instalado</p>
+    <p class="nota">3 a 6 jogadores · voz pelo Discord · nada é instalado · <button class="link" id="bt-ajuda-inicio">Como jogar?</button></p>
     <p id="msg-inicio" class="msg" role="status"></p>
   </div>
 </section>
@@ -56,6 +56,7 @@
       <button class="bt bt-mini bt-mostarda" id="bt-dado" title="Rolar o Dado do Olho à vista">Dado</button>
       <button class="bt bt-mini bt-claro" id="bt-dado-esc" title="Rolar escondido (Delírio, oráculo falso)">Dado escondido</button>
       <button class="bt bt-mini bt-escuro" id="bt-noite">Noite</button>
+      <button class="bt bt-mini bt-turquesa bt-ajuda" id="bt-ajuda" title="Como jogar" aria-label="Como jogar">?<span class="so-desk"> Como jogar</span></button>
       <button class="bt bt-mini bt-claro" id="bt-menu" aria-haspopup="true">☰</button>
     </div>
     <div id="menu" class="menu" hidden>
@@ -65,10 +66,13 @@
       <button id="mn-voltar" data-host>Fechar Discos e continuar</button>
       <button id="mn-nova" data-host>Nova partida (mesmas pessoas)</button>
       <button id="mn-amanhecer" data-host>Forçar amanhecer</button>
-      <button id="mn-regras">Resumo das regras</button>
+      <button id="mn-regras">Como jogar (regras e botões)</button>
+      <button id="mn-tour">Repetir o tour guiado</button>
+      <button id="mn-nivel">Nível de experiência: <span id="mn-nivel-txt"></span></button>
       <button id="mn-sair">Sair da mesa</button>
     </div>
   </header>
+  <div id="faixa-vez" class="faixa-vez" hidden aria-live="polite"></div>
 
   <main class="area">
     <section id="mapa" class="mapa">
@@ -90,6 +94,11 @@
           <h2>Escolha seu Hóspede</h2>
           <p class="convite">Convide: <b id="lb-codigo"></b> · <button class="link" id="lb-copiar">copiar link</button></p>
           <div id="lb-hospedes" class="grade-hospedes"></div>
+          <div class="lb-nivel">
+            <h3>Seu nível de experiência <small>(só muda a ajuda na SUA tela)</small></h3>
+            <div id="lb-nivel"></div>
+          </div>
+          <label class="check lb-ordem" id="lb-ordem-rot" hidden><input type="checkbox" id="lb-ordem"> Sortear a ordem dos turnos ao iniciar (senão, vale a ordem de entrada)</label>
           <div class="lb-rodape">
             <div id="lb-jogadores" class="lb-jogadores"></div>
             <button id="lb-assistir" class="bt bt-claro bt-mini">Só assistir</button>
@@ -162,6 +171,8 @@
   </div>
 </div>
 
+<div id="sua-vez" class="sua-vez" hidden><p>É a sua vez!</p><small></small></div>
+<div id="custo-float" class="custo-float" hidden role="status" aria-live="polite"></div>
 <div id="aviso" class="aviso" role="status" aria-live="polite"></div>
 
 <script src="js/peerjs.min.js"></script>

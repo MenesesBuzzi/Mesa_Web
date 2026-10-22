@@ -5,11 +5,13 @@ import { SessaoHost, SessaoCliente, salaSalva } from './sessao.js';
 import { normalizarCodigo } from './rede.js';
 import { Mapa } from './mapa.js';
 import { $, $$, esc, aviso, copiar, hora } from './util.js';
+import * as TUT from './tutorial.js';
 
 let S = null;          // sessão (host ou convidado)
 let V = null;          // última visão recebida
 let mapa = null;
-const visto = { dado: 0, dadoPriv: 0, destaque: 0, log: 0, noite: 0, discos: false, primeira: true, show: 0 };
+const visto = { dado: 0, dadoPriv: 0, destaque: 0, log: 0, noite: 0, discos: false, primeira: true, show: 0, eraMinha: false, tour: false, pedagio: null };
+let gastosAberto = true;
 let abaAtual = 'mao';
 
 const carta = (cid) => DADOS.cartas[cid];
@@ -23,7 +25,7 @@ const salaDe = (p) => { if (!p) return null; for (const s of DADOS.mansao.salas)
 async function enviar(a, ok) {
   if (!S) return;
   const r = await S.enviar(a);
-  if (!r.ok) aviso(r.erro || 'Não deu.', 'erro'); else if (ok) aviso(ok);
+  if (!r.ok) aviso(r.erro || 'Não deu.', 'erro'); else if (r.aviso) avisoForaDaVez(r.aviso); else if (ok) aviso(ok);
   return r;
 }
 
@@ -37,6 +39,7 @@ function initInicio() {
   $('#bt-criar').onclick = () => comecar('host');
   $('#bt-retomar').onclick = () => comecar('retomar');
   $('#bt-entrar').onclick = () => comecar('cliente');
+  $('#bt-ajuda-inicio').onclick = () => abrirComoJogar();
   $('#in-codigo').addEventListener('keydown', (e) => { if (e.key === 'Enter') comecar('cliente'); });
 }
 
@@ -94,7 +97,12 @@ function initMesa() {
   $('#mn-voltar').onclick = () => { fecharMenu(); enviar({ t: 'voltarPartida' }); };
   $('#mn-nova').onclick = () => { fecharMenu(); if (confirm('Começar uma partida nova? Tudo volta ao começo.')) enviar({ t: 'novaPartida' }); };
   $('#mn-amanhecer').onclick = () => { fecharMenu(); enviar({ t: 'amanhecer', forcar: true }); };
-  $('#mn-regras').onclick = () => { fecharMenu(); modalRegras(); };
+  $('#mn-regras').onclick = () => { fecharMenu(); abrirComoJogar(); };
+  $('#bt-ajuda').onclick = () => abrirComoJogar();
+  $('#mn-tour').onclick = () => { fecharMenu(); iniciarTour(TUT.TOUR_COMPLETO); };
+  $('#mn-nivel').onclick = () => { fecharMenu(); modalNivel(); };
+  $('#lb-ordem').onchange = (e) => enviar({ t: 'ordemTurnos', embaralhar: e.target.checked });
+  atualizarNivelMenu();
   $('#mn-sair').onclick = () => { fecharMenu(); if (confirm(S.ehHost ? 'Se o host sai, a sala fecha para todos (o estado fica salvo neste navegador para retomar). Sair?' : 'Sair da mesa?')) { S.sair(); location.href = location.pathname; } };
   $('#zm-mais').onclick = () => mapa.zoom(1.3); $('#zm-menos').onclick = () => mapa.zoom(1 / 1.3); $('#zm-ajustar').onclick = () => mapa.ajustar();
   $('#modal-fechar').onclick = fecharModal;
@@ -109,7 +117,12 @@ function trocarAba(a) {
   if (a === 'log' && V) { visto.log = V.log.at(-1)?.n || 0; $('#n-log').textContent = ''; }
 }
 
-function aoSoltarPeao(alvo, x, y, final) { if (!S) return; S.enviar({ t: 'mover', alvo: alvo === 'palhaco' ? 'palhaco' : undefined, x: Math.round(x), y: Math.round(y), final }).then(r => { if (!r.ok && final) aviso(r.erro, 'erro'); }); }
+function aoSoltarPeao(alvo, x, y, final) { if (!S) return; S.enviar({ t: 'mover', alvo: alvo === 'palhaco' ? 'palhaco' : undefined, x: Math.round(x), y: Math.round(y), final }).then(r => { if (!r.ok && final) aviso(r.erro, 'erro'); else if (r.aviso) avisoForaDaVez(r.aviso); }); }
+function avisoForaDaVez(txt) {
+  aviso('Fora da vez · ' + txt, 'leve');
+  piscar('#faixa-vez');
+  if (TUT.mostrarDica('fora-vez', '#faixa-vez', 'Calma, ainda não é a sua vez', 'Fora da vez você pode sussurrar Dicas e conversar à vontade. Comprar e mover é na sua vez: a mesa deixa, mas marca "fora da vez" no log para todos.')) {}
+}
 
 // ===================== RECEBER VISÃO =====================
 function receberVisao(v) {
@@ -118,8 +131,12 @@ function receberVisao(v) {
   document.body.classList.toggle('fase-lobby', v.fase === 'lobby');
   document.body.classList.toggle('sou-host', !!v.eu?.ehHost);
   mapa?.atualizar(v);
-  renderRelogio(v); renderLobby(v); renderMao(v); renderDisco(v); renderMesa(v); renderLog(v); renderNoite(v); renderProposta(v);
+  renderRelogio(v); renderLobby(v); renderMao(v); renderDisco(v); renderMesa(v); renderLog(v); renderNoite(v); renderProposta(v); renderFaixa(v);
+  $$('.peao').forEach(el => el.classList.toggle('vez', v.fase === 'jogo' && el.dataset.alvo === v.turno?.daVez));
   $('#bt-noite').disabled = v.fase !== 'jogo'; $('#bt-rel-mais').disabled = $('#bt-rel-menos').disabled = v.fase !== 'jogo';
+  $('#bt-rel-mais').hidden = $('#bt-rel-menos').hidden = !v.eu?.ehHost;
+  if (!visto.primeira && ant) mudancas(ant, v);
+  tutorial(v);
   $('#mn-iniciar').hidden = v.fase !== 'lobby'; $('#mn-abrir').hidden = v.fase !== 'jogo'; $('#mn-voltar').hidden = v.fase !== 'fim';
   $('#mn-amanhecer').hidden = !v.noite.ativa;
   const minha = v.eu?.hospede != null ? jogador(v.eu.id)?.pos : null;
@@ -168,7 +185,15 @@ function renderLobby(v) {
   $('#lb-iniciar').hidden = !v.eu?.ehHost; $('#lb-assistir').hidden = souMod;
   $('#lb-iniciar').textContent = `Iniciar partida (${n} Hóspede${n === 1 ? '' : 's'})`;
   $('#lb-espera').textContent = v.eu?.ehHost ? (n < 3 ? 'A regra pede 3 a 6 jogadores (dá para testar com menos).' : '') : 'Esperando o host iniciar a partida...';
+  $('#lb-ordem-rot').hidden = !v.eu?.ehHost; $('#lb-ordem').checked = !!v.turnoAleatorio;
+  renderNivelLobby();
 }
+function renderNivelLobby() {
+  const atual = TUT.nivelExp();
+  $('#lb-nivel').innerHTML = TUT.htmlEscolhaNivel(atual) + (atual ? '' : '<p class="nota">Escolha um. Se não escolher, a mesa trata você como Iniciante.</p>');
+  $$('#lb-nivel [data-nivel]').forEach(b => b.onclick = () => { TUT.definirNivelExp(b.dataset.nivel); renderNivelLobby(); atualizarNivelMenu(); });
+}
+function atualizarNivelMenu() { $('#mn-nivel-txt').textContent = TUT.NIVEIS_EXP[TUT.nivelExp() || 'iniciante'].nome; }
 
 // ===================== MÃO =====================
 function imgCarta(cid, extra = '') { const c = carta(cid); return `<img class="carta ${extra}" src="${c.img}" alt="${esc(c.nome)}" loading="lazy">`; }
@@ -205,6 +230,8 @@ function renderMao(v) {
     <details class="niveis"><summary>Comprar de outro nível de Sanidade</summary>
       <div class="compras">${[100, 75, 50, 25, 10].map(n => compra('sanidade_' + n, n + '%')).join('')}</div>
     </details>` : '<p class="nota">As cartas aparecem quando o host iniciar a partida.</p>'}
+    ${jogo ? `<details class="gastos" ${gastosAberto ? 'open' : ''}><summary>Seus últimos gastos <small>(só você vê)</small></summary>
+      ${eu.gastos?.length ? `<ul>${eu.gastos.slice().reverse().slice(0, 6).map(g => `<li><time>${hora(g.t)}</time> ${esc(g.txt)}</li>`).join('')}</ul>` : '<p class="nota">Nada ainda. Comprar carta não custa sanidade nem moedas.</p>'}</details>` : ''}
     <h3 class="sec">Sua mão <small>(só você vê)</small></h3>
     <div class="cartas" id="m-mao">${eu.mao.length ? eu.mao.map(c => `<button class="carta-bt" data-c="${c}">${imgCarta(c)}${carta(c).baralho === 'dica' ? `<span class="selo ${carta(c).selo}">${carta(c).selo === 'branco' ? '☆ verdadeira' : '★ falsa'}</span>` : ''}</button>`).join('') : '<p class="nota">Mão vazia.</p>'}</div>
     ${eu.dicasRecebidas.length ? `<h3 class="sec">Dicas que você recebeu <small>(viradas para baixo)</small></h3>
@@ -216,9 +243,10 @@ function renderMao(v) {
   $$('#pg-mao .compra').forEach(b => b.onclick = async () => {
     const bar = b.dataset.b;
     if (bar === 'pacto' && !confirm('Comprar um Pacto em SEGREDO? Pela regra, só quem chegou a 10% ou menos. Você fica marcado como Tomado (só você sabe).')) return;
-    const r = await enviar({ t: 'comprar', baralho: bar }); if (r?.ok && r.carta) modalCarta(r.carta, 'mao', true);
+    comprarComFeedback({ t: 'comprar', baralho: bar }, b);
   });
-  $('#m-nivel') && ($('#m-nivel').onclick = async () => { const r = await enviar({ t: 'comprarNivel' }); if (r?.ok && r.carta) modalCarta(r.carta, 'mao', true); });
+  $('#m-nivel') && ($('#m-nivel').onclick = (ev) => comprarComFeedback({ t: 'comprarNivel' }, ev.currentTarget));
+  const gd = $('#pg-mao details.gastos'); if (gd) gd.ontoggle = () => { gastosAberto = gd.open; };
   $('#m-hab').onclick = () => enviar({ t: 'habilidade', valor: !pub.habilidadeUsada });
   $('#m-corr').onclick = () => enviar({ t: 'corrente', valor: !pub.corrente });
   $('#m-achar').onclick = () => { if (pub.pos) mapa.focar(pub.pos.x, pub.pos.y, 0.5); };
@@ -279,7 +307,7 @@ function renderMesa(v) {
           <div class="jog-nome"><b>${esc(j.apelido)}</b>${j.ehHost ? ' <small class="tag">host</small>' : ''}${j.id === v.eu?.id ? ' <small class="tag">você</small>' : ''}<br><small>${h ? esc(h.nome) + ' · ' + esc(salaDe(j.pos) || '?') : (j.ehHost && v.moderador ? 'moderador' : 'assistindo')}${j.conectado ? '' : ' · desconectado'}</small></div>
           ${h ? nivelBadge(j.ultimoNivel) : ''}</div>
         ${h ? `<div class="jog-info">
-          ${v.pedagio ? `<span class="moedas" title="Moedas (à vista)">${j.moedas} moeda${j.moedas === 1 ? '' : 's'}</span>` : ''}
+          ${v.pedagio ? `<span class="moedas" data-j="${j.id}" title="Moedas (à vista)">${j.moedas} moeda${j.moedas === 1 ? '' : 's'}</span>` : ''}
           <span title="Dicas na mão">${j.nDicasMao} Dica${j.nDicasMao === 1 ? '' : 's'} na mão</span>
           ${j.dicasRecebidas.length ? `<span title="Dicas recebidas, viradas para baixo">${j.dicasRecebidas.length} recebida${j.dicasRecebidas.length > 1 ? 's' : ''} (de ${j.dicasRecebidas.map(x => esc(jogador(x.de)?.apelido || '?')).join(', ')})</span>` : ''}
           ${j.chaves ? `<span class="chave">${j.chaves} Chave${j.chaves > 1 ? 's' : ''}</span>` : ''}
@@ -296,6 +324,9 @@ function renderMesa(v) {
         </div>` : (v.eu?.ehHost && j.id !== v.eu.id ? `<div class="linha-bt"><button class="bt bt-mini bt-claro" data-expulsar="${j.id}">Tirar</button></div>` : '')}
       </div>`;
     }).join('')}</div>
+    ${v.turno ? `<h3 class="sec">Ordem dos turnos <small>(rodada ${v.relogio})</small></h3>
+    <ol class="ordem-turnos">${v.turno.ordem.map((id, i) => { const j = jogador(id); return `<li class="${i === v.turno.vez ? 'vez' : i < v.turno.vez ? 'jogou' : ''}">${rotulo(j)}${i === v.turno.vez ? ' <small class="tag">na vez</small>' : i < v.turno.vez ? ' <small>já jogou</small>' : ''}</li>`; }).join('')}</ol>
+    ${v.eu?.ehHost ? `<div class="linha-bt"><button class="bt bt-mini bt-claro" id="ot-sortear" ${v.turno.vez === 0 && !Object.values(v.turno.feito).some(Boolean) ? '' : 'disabled title="Só no começo da rodada"'}>Sortear ordem</button><button class="bt bt-mini bt-claro" id="ot-entrada" ${v.turno.vez === 0 && !Object.values(v.turno.feito).some(Boolean) ? '' : 'disabled'}>Ordem de entrada</button></div>` : ''}` : ''}
     <h3 class="sec">O Palhaço</h3>
     <div class="palhaco-ctrl">
       ${v.eu?.ehHost ? `<label class="check"><input type="checkbox" id="pc-auto" ${v.palhacoAuto ? 'checked' : ''}> <b>Palhaço automático</b> (anda sozinho no "+ Rodada", fala, tira Eventos, faz propostas)</label>
@@ -307,6 +338,8 @@ function renderMesa(v) {
       ${Object.entries(v.baralhos).map(([b, x]) => `<tr><td>${DADOS.baralhos[b].rotulo}</td><td>${x.n ?? '?'}</td><td>${x.descarte ?? '?'}</td></tr>`).join('')}</table>
       <p class="nota">"?" = escondido de propósito (contar o Pacto e a Sanidade 10% revelaria os Tomados). Baralho vazio reembaralha o descarte sozinho.</p>` : ''}`;
   $$('#pg-mesa [data-zoomc]').forEach(b => b.onclick = () => modalCarta(b.dataset.zoomc, 'ver'));
+  $('#ot-sortear') && ($('#ot-sortear').onclick = () => enviar({ t: 'ordemTurnos', embaralhar: true }));
+  $('#ot-entrada') && ($('#ot-entrada').onclick = () => enviar({ t: 'ordemTurnos', embaralhar: false }));
   $('#pc-auto') && ($('#pc-auto').onchange = (e) => enviar({ t: 'palhacoConfig', auto: e.target.checked }));
   $('#pc-pedagio') && ($('#pc-pedagio').onchange = (e) => enviar({ t: 'palhacoConfig', pedagio: e.target.checked }));
   $$('#pg-mesa [data-dar]').forEach(b => b.onclick = () => modalDarDica(b.dataset.dar));
@@ -453,10 +486,10 @@ function mostrarDestaque(d) {
 // ===================== MODAIS =====================
 let modalAberto = null;
 function abrirModal(html, ligar, opts = {}) {
-  $('#modal-corpo').innerHTML = html; $('#modal').hidden = false; modalAberto = { ...opts };
+  $('#modal-corpo').innerHTML = html; $('#modal').hidden = false; $('#modal').classList.remove('largo'); modalAberto = { ...opts };
   if (ligar) ligar($('#modal-corpo'));
 }
-function fecharModal() { $('#modal').hidden = true; modalAberto = null; }
+function fecharModal() { $('#modal').hidden = true; $('#modal').classList.remove('largo'); modalAberto = null; }
 function modalImagem(src) { abrirModal(`<img class="carta grande" src="${src}" alt="">`); }
 
 function modalCarta(cid, origem, recem = false) {
@@ -555,18 +588,166 @@ function modalDiscos() {
     <p class="nota">Confiram os Laços que dependiam de sanidade: quem mentiu perde sozinho. Tomados que cumpriram o Pacto: revelem a carta.</p>`);
 }
 
-function modalRegras() {
-  abrirModal(`<h2 class="titulo-modal">Resumo rápido</h2>
-  <ol class="regras">
-    <li><b>Sussurro</b> (opcional): dê 1 Dica virada para baixo a outro Hóspede (aba Mesa → Dar Dica) e diga o que ela "diz".</li>
-    <li><b>Movimento</b>: arraste seu peão até 2 Salas, pelas portas turquesa. Ou descanse (+5% no Disco).</li>
-    <li><b>Explorar</b>: entrou em cômodo com Ficha? Toque na Ficha → Olhar em segredo. Chave: pegue. Armadilha: compre Laço.</li>
-    <li><b>Evento</b>: compre e leia em voz alta.</li>
-    <li><b>Nível</b>: confira o Disco e compre Sanidade do seu nível (todos veem só o nível).</li>
-    <li><b>Reabastecer</b>: compre Dicas até ter 3.</li>
-  </ol>
-  <p>Quando todos jogarem: <b>+ Rodada</b> no Relógio e <b>Noite</b>. Dado: 1–2 = olho aberto.</p>
-  <p>Níveis: 100% (76–100) normal · 75% (51–75) e 50% (26–50) compram Distorção · 25% (11–25) Delírio · 10% (0–10) Tomado.</p>`);
+// ===================== COMO JOGAR / TOUR / NÍVEL =====================
+function abrirComoJogar() {
+  abrirModal(TUT.htmlComoJogar(TUT.nivelExp()), (m) => TUT.ligarComoJogar(m, {
+    aoTour: () => { fecharModal(); iniciarTour(TUT.TOUR_COMPLETO); },
+    aoNivel: () => modalNivel(),
+  }), { ajuda: true });
+  $('#modal').classList.add('largo');
+}
+function iniciarTour(passos) {
+  fecharModal(); TUT.fecharDica();
+  if ($('#tela-mesa').hidden) { aviso('O tour mostra a mesa: entre numa sala primeiro.'); return; }
+  TUT.abrirTour(passos, { aoAba: (a) => trocarAba(a), aoFim: () => { trocarAba('mao'); setTimeout(() => { if (V) tutorial(V); }, 400); } });
+}
+function modalNivel() {
+  const desenha = () => {
+    $('#modal-corpo').innerHTML = `<h2 class="titulo-modal">Nível de experiência</h2><p class="nota">Muda só a ajuda na sua tela. Fica salvo neste navegador.</p>${TUT.htmlEscolhaNivel(TUT.nivelExp())}`;
+    $$('#modal-corpo [data-nivel]').forEach(b => b.onclick = () => { TUT.definirNivelExp(b.dataset.nivel); atualizarNivelMenu(); if (V?.fase === 'lobby') renderNivelLobby(); aviso(`Nível: ${TUT.NIVEIS_EXP[b.dataset.nivel].nome}.${b.dataset.nivel === 'iniciante' ? ' As dicas contextuais estão ligadas de novo.' : ''}`); desenha(); });
+  };
+  abrirModal('', null); desenha();
+}
+// Abre o tour sozinho quando a partida começa, conforme o nível (só nesta tela; nada vai pela rede).
+function tutorial(v) {
+  if (v.fase !== 'jogo' || !v.eu) return;
+  const nivel = TUT.nivelExp() || 'iniciante';
+  const chave = `sussurros-tour-${v.codigo}`;
+  if (!visto.tour) {
+    visto.tour = true;
+    let feito = false; try { feito = !!localStorage.getItem(chave); } catch (_) {}
+    if (!feito && nivel !== 'veterano') {
+      try { localStorage.setItem(chave, nivel); } catch (_) {}
+      const passos = nivel === 'iniciante' ? TUT.TOUR_COMPLETO : TUT.TOUR_CURTO;
+      const t0 = Date.now();
+      visto.tourPendente = true;
+      const tenta = () => { if ((tocandoShow || filaShow.length || !$('#clipe').hidden || !$('#proposta').hidden) && Date.now() - t0 < 25000) return setTimeout(tenta, 400); visto.tourPendente = false; if (V?.fase === 'jogo') iniciarTour(passos); };
+      setTimeout(tenta, 600);
+    }
+  }
+  if (nivel !== 'iniciante' || TUT.tourAberto() || visto.tourPendente) return;
+  dicasContextuais(v);
+}
+function dicasContextuais(v) {
+  const eu = v.eu; if (eu.hospede == null) return;
+  const t = v.turno; const minha = t && t.daVez === eu.id && !v.noite.ativa;
+  // pedágio: primeira vez que alguém é pego
+  const ped = v.log.filter(l => !l.privado && l.texto.startsWith('O Palhaço pegou')).at(-1)?.n || 0;
+  if (visto.pedagio === null) visto.pedagio = ped;
+  if (ped > visto.pedagio) { visto.pedagio = ped; if (TUT.mostrarDica('pedagio', '.peao[data-alvo="palhaco"]', 'O Palhaço cobrou pedágio', 'Quem cruza com ele paga <b>1 moeda</b> (sem moedas, 15% de sanidade), vai para um cômodo sorteado e rola o Dado: olho fechado = −10%; aberto = Distorção ou Laço. Ele anda sozinho no fim de cada rodada: fique de olho no caminho dele.')) return; }
+  if (v.noite.ativa) { TUT.mostrarDica('noite', '#noite .noite-caixa', 'A Noite', 'Todos "fecham os olhos". Quem está Tomado recebe em segredo 1 carta de Sanidade 10% e pode mover o Palhaço 1 cômodo. Os outros só esperam: o Amanhecer libera em 7 segundos.'); return; }
+  if (eu.dicasRecebidas.length && TUT.mostrarDica('dica-recebida', '.abas [data-aba="mao"]', 'Você recebeu uma Dica', 'Na sua vez, decida na aba Mão: <b>Seguir</b> (revela a todos; verdadeira dá +10% aos dois, falsa −10% a você) ou <b>Ignorar</b> (descarta sem ninguém saber).')) return;
+  if (!minha) return;
+  const f = t.feito;
+  if (!f.salas && !f.descanso) { TUT.mostrarDica('mover', `.peao[data-alvo="${eu.id}"]`, 'Agora mova seu peão', 'Arraste o peão com anel dourado até <b>2 Salas</b>, passando pelas portas turquesa. Ou toque em <b>Descansar</b> (+5%) e fique onde está.'); return; }
+  if (!f.evento && !f.nivel) { const alvo = abaAtual === 'mao' && $('#pg-mao .compras') ? '#pg-mao .compras' : '.abas [data-aba="mao"]'; TUT.mostrarDica('comprar', alvo, 'Toque no baralho para comprar', 'Entrou num cômodo com Ficha? Olhe-a antes. Depois compre 1 <b>Evento</b> (leia em voz alta) e a <b>Sanidade do seu nível</b>.'); return; }
+  if (f.nivel) TUT.mostrarDica('passar', '#bt-passar', 'Terminou a sua vez?', 'Complete suas Dicas até 3 e toque em <b>Passar a vez</b>. Quando todos passarem, o Relógio anda sozinho.');
+}
+
+// ===================== FAIXA DA VEZ =====================
+function renderFaixa(v) {
+  const el = $('#faixa-vez'); const t = v.turno;
+  if (v.fase !== 'jogo' || !t || !t.daVez) { el.hidden = true; document.body.classList.remove('minha-vez'); visto.eraMinha = false; return; }
+  const jv = jogador(t.daVez); const minha = t.daVez === v.eu?.id; const host = !!v.eu?.ehHost;
+  const h = jv?.hospede != null ? DADOS.hospedes[jv.hospede] : null;
+  const f = t.feito; const nd = jv?.nDicasMao ?? 0;
+  const est = (n, max) => n === 0 ? '' : n > max ? 'acima' : 'feito';
+  const prox = t.ordem.length > 1 ? jogador(t.ordem[(t.vez + 1) % t.ordem.length]) : null;
+  const passos = [
+    `<span class="passo ${est(f.dica, 1)}" title="Sussurro (opcional): 1 Dica">Dica ${f.dica}/1</span>`,
+    f.descanso ? '<span class="passo feito" title="Descansou em vez de mover (+5%)">Descansou</span>' : `<span class="passo ${est(f.salas, 2)}" title="Movimento: até 2 Salas">Mover ${f.salas}/2</span>`,
+    `<span class="passo ${f.ficha ? 'feito' : ''}" title="Explorar: olhar a Ficha do cômodo">Ficha ${f.ficha ? '✓' : '–'}</span>`,
+    `<span class="passo ${est(f.evento, 1)}" title="Evento: 1 por vez">Evento ${f.evento}/1</span>`,
+    `<span class="passo ${est(f.nivel, 1)}" title="Nível: 1 carta de Sanidade">Sanidade ${f.nivel}/1</span>`,
+    `<span class="passo ${nd >= 3 ? 'feito' : ''} ${nd > 3 ? 'acima' : ''}" title="Reabastecer: Dicas até 3 na mão">Dicas ${nd}/3</span>`,
+  ].join('');
+  el.hidden = false; el.classList.toggle('minha', minha);
+  document.body.classList.toggle('minha-vez', minha);
+  el.innerHTML = `<div class="faixa-quem">${h ? `<img src="${h.peao}" alt="">` : ''}<span>${minha ? '<b>É a sua vez!</b>' : `Vez de <b>${esc(rotuloTxt(jv))}</b>`}<small>Rodada ${v.relogio} · ${t.vez + 1}º de ${t.ordem.length}${prox && prox !== jv ? ` · depois: ${esc(prox.apelido)}` : ''}</small></span></div>
+    <div class="faixa-passos" title="O que a mesa registrou nesta vez (regras.md, seção 6)">${passos}</div>
+    <div class="faixa-acoes">${minha && !f.salas && !f.descanso ? '<button class="bt bt-mini bt-claro" id="bt-descansar" title="Em vez de se mover: +5% no Disco">Descansar</button>' : ''}${minha || host ? `<button id="bt-passar" class="bt bt-vermelho bt-passar">${minha ? 'Passar a vez' : `Passar a vez de ${esc(jv?.apelido || '?')}`}</button>` : '<small class="faixa-dica">Na sua vez, aparece aqui o botão Passar a vez.</small>'}</div>`;
+  $('#bt-passar') && ($('#bt-passar').onclick = async (ev) => { ev.currentTarget.disabled = true; const r = await enviar({ t: 'passarVez', seq: t.seq }); if (!r?.ok && ev.currentTarget) ev.currentTarget.disabled = false; });
+  $('#bt-descansar') && ($('#bt-descansar').onclick = () => enviar({ t: 'descansar' }, 'Você descansou: +5% no Disco.'));
+  if (minha && !visto.eraMinha && !visto.primeira) suaVez(v);
+  visto.eraMinha = minha;
+}
+function suaVez(v) {
+  const el = $('#sua-vez'); el.querySelector('small').textContent = `Rodada ${v.relogio}: mover, explorar, Evento, Sanidade, Dicas. Depois, Passar a vez.`;
+  el.hidden = false; el.classList.remove('entra'); void el.offsetWidth; el.classList.add('entra');
+  clearTimeout(suaVez._t); suaVez._t = setTimeout(() => { el.hidden = true; }, 2600);
+  el.onclick = () => { el.hidden = true; };
+  tocarVez();
+  if (navigator.vibrate) try { navigator.vibrate([80, 60, 80]); } catch (_) {}
+}
+function tocarVez() {
+  const a = ctxAudio(); if (!a || a.state !== 'running') return;
+  const g = a.createGain(); g.gain.value = 0.16; g.connect(a.destination);
+  [[659, 0], [880, 0.14], [1319, 0.28]].forEach(([f, t]) => {
+    const o = a.createOscillator(), e = a.createGain(); o.type = 'triangle'; o.frequency.value = f;
+    const t0 = a.currentTime + t; e.gain.setValueAtTime(0, t0); e.gain.linearRampToValueAtTime(1, t0 + 0.01); e.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
+    o.connect(e); e.connect(g); o.start(t0); o.stop(t0 + 0.55);
+  });
+}
+
+// ===================== FEEDBACK DE CUSTO =====================
+function piscar(sel) { $$(sel).forEach(el => { el.classList.remove('pisca'); void el.offsetWidth; el.classList.add('pisca'); setTimeout(() => el.classList.remove('pisca'), 1700); }); }
+function flutuante({ titulo, linhas = [], rodape = '', classe = '' }) {
+  const box = $('#custo-float'); box.hidden = false;
+  const el = document.createElement('div'); el.className = 'flutua ' + classe;
+  el.innerHTML = `${titulo ? `<b>${esc(titulo)}</b>` : ''}${linhas.map(l => `<span>${esc(l)}</span>`).join('')}${rodape ? `<small>${esc(rodape)}</small>` : ''}`;
+  el.onclick = () => el.remove();
+  box.appendChild(el);
+  while (box.children.length > 3) box.firstElementChild.remove();
+  setTimeout(() => { el.classList.add('sai'); setTimeout(() => { el.remove(); if (!box.children.length) box.hidden = true; }, 450); }, 6000);
+  return el;
+}
+function animarCompra(r0, src) {
+  return new Promise(res => {
+    if (!r0 || !r0.width || matchMedia('(prefers-reduced-motion: reduce)').matches) return res();
+    let dest = $('#m-mao'); let r1 = dest?.getBoundingClientRect();
+    if (!r1 || r1.top > innerHeight - 40 || r1.bottom < 0) { dest = $('.abas [data-aba="mao"]'); r1 = dest.getBoundingClientRect(); }
+    const voo = document.createElement('img'); voo.src = src; voo.className = 'carta-voo'; voo.alt = '';
+    Object.assign(voo.style, { left: r0.left + 'px', top: r0.top + 'px', width: r0.width + 'px', height: r0.height + 'px' });
+    document.body.appendChild(voo);
+    const dx = (r1.left + Math.min(r1.width, 140) / 2) - (r0.left + r0.width / 2), dy = (r1.top + Math.min(r1.height, 120) / 2) - (r0.top + r0.height / 2);
+    const an = voo.animate([
+      { transform: 'translate(0,0) rotate(0) scale(1)', opacity: 1 },
+      { transform: `translate(${dx * 0.45}px, ${dy * 0.45 - 70}px) rotate(-14deg) scale(1.5)`, opacity: 1, offset: 0.45 },
+      { transform: `translate(${dx}px, ${dy}px) rotate(6deg) scale(.75)`, opacity: 0.15 },
+    ], { duration: 750, easing: 'cubic-bezier(.3,.7,.4,1)' });
+    const fim = () => { voo.remove(); piscar('.abas [data-aba="mao"]'); res(); };
+    an.onfinish = fim; setTimeout(() => { if (voo.isConnected) fim(); }, 1200);
+  });
+}
+async function comprarComFeedback(a, botao) {
+  const r0 = botao?.querySelector('img')?.getBoundingClientRect() || botao?.getBoundingClientRect();
+  const bar = a.baralho || (V?.eu?.tomado ? 'sanidade_25' : `sanidade_${Math.max(25, nivelDe(V?.eu?.sanidade ?? 80))}`);
+  botao?.classList.add('puxou');
+  const r = await enviar(a);
+  if (!r?.ok || !r.carta) return;
+  const c = r.custo;
+  const anim = animarCompra(r0, DADOS.baralhos[carta(r.carta).baralho]?.verso || DADOS.baralhos[bar]?.verso);
+  if (c) {
+    const el = flutuante({ titulo: c.titulo, linhas: c.linhas, rodape: c.restante != null ? `Baralho ${c.baralho}: ${c.restante} restante${c.restante === 1 ? '' : 's'}` : '', classe: c.foraDaVez ? 'fora' : c.acima ? 'acima' : 'gratis' });
+    if (c.foraDaVez) avisoForaDaVez(c.linhas[0]);
+  }
+  await anim;
+  modalCarta(r.carta, 'mao', true);
+  setTimeout(() => TUT.mostrarDica('custo', '#custo-float', 'Quanto custou essa compra?', 'Pela regra, comprar <b>não custa</b> sanidade nem moedas: cada compra usa um passo da sua vez (1 Evento, 1 Sanidade, Dicas até 3). O aviso mostra o passo usado e quantas cartas sobram. Seus gastos ficam na aba Mão.'), 300);
+}
+// O que mudou entre duas visões: Disco (privado) e moedas piscam; ganhos/perdas próprios viram aviso flutuante.
+function mudancas(ant, v) {
+  const eu = v.eu, ea = ant.eu;
+  if (eu && ea && eu.hospede != null && ea.hospede === eu.hospede && v.fase === 'jogo' && ant.fase === 'jogo') {
+    const ds = eu.sanidade - ea.sanidade;
+    if (ds) { piscar('.abas [data-aba="disco"]'); piscar('#pg-disco .disco-valor'); if (abaAtual !== 'disco') flutuante({ titulo: 'Seu Disco mudou', linhas: [`${ds > 0 ? '+' : '−'}${Math.abs(ds)}% sanidade`], rodape: 'Só você vê', classe: ds < 0 ? 'perda' : 'ganho' }); }
+  }
+  if (v.fase !== 'jogo' || ant.fase !== 'jogo') return;
+  for (const j of v.jogadores) {
+    const a = ant.jogadores.find(x => x.id === j.id); if (!a || a.moedas === j.moedas) continue;
+    piscar(`.peao[data-alvo="${j.id}"] .peao-moedas`); piscar(`#pg-mesa .moedas[data-j="${j.id}"]`);
+    if (j.id === eu?.id) { const d = j.moedas - a.moedas; flutuante({ titulo: 'Suas moedas', linhas: [`${d > 0 ? '+' : '−'}${Math.abs(d)} moeda${Math.abs(d) > 1 ? 's' : ''}`], rodape: `Agora: ${j.moedas}`, classe: d < 0 ? 'perda' : 'ganho' }); }
+  }
 }
 
 // ===================== INÍCIO =====================

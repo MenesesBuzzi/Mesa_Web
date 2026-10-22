@@ -14,6 +14,11 @@ fim de cada rodada, cobra pedágio em moedas, fala num balão com sino, passa cl
 Eventos e faz propostas secretas. Não usa API paga nem LLM: é um bot heurístico com personalidade que
 roda no navegador do host (js/palhaco.js). Detalhes na seção 3b.
 
+NOVO (22/10): TURNOS, CUSTO DE COMPRA E AJUDA. A mesa agora tem vez de cada jogador (faixa "Vez de Ana
+(O Médico)", botão "Passar a vez", rodada que avança sozinha), mostra o que cada compra "custou" pela regra
+(carta voando do baralho para a mão + aviso flutuante + "Seus últimos gastos"), tem o botão "? Como jogar",
+um tour guiado e um nível de experiência por jogador (Iniciante, Intermediário, Veterano). Seção 3c.
+
 Endereço publicado: https://mesaweb-five.vercel.app/ (deploy automático da Vercel a cada push na
 branch main do repositório MenesesBuzzi/Mesa_Web).
 
@@ -38,11 +43,15 @@ Testes automáticos (opcionais):
    node testes/palhaco.test.mjs          -> Palhaço com IA: grafo de portas, 400 rodadas automáticas,
                                             pedágio/moedas, as 12 propostas aceitas e recusadas e
                                             privacidade das propostas (sem rede)
+   node testes/turnos.test.mjs           -> turnos: ordem, vez, Passar a vez, contador de passos, rodada
+                                            automática, aviso fora da vez, custo da compra e privacidade
+                                            de "Seus últimos gastos" (sem rede)
    npm i playwright && npx playwright install chromium
    python3 -m http.server 8080 &
    node testes/e2e_playwright.mjs        -> 1 host + 3 convidados em Chromium headless,
-                                            rede real; confere que nada secreto vaza e
-                                            refaz as capturas de tela em capturas/
+                                            rede real; confere que nada secreto vaza,
+                                            testa nível/tour (cada tela vê só o seu),
+                                            turnos e custo, e refaz as capturas em capturas/
 
 
 -----------------------------------------------------------------------------
@@ -97,7 +106,7 @@ já está incluído para o GitHub servir tudo sem processar.
   de Sanidade, Dicas na mão, Dicas recebidas, Chaves, Corrente, cartas à vista), "Dar Dica",
   e a contagem dos baralhos.
 - Aba LOG: tudo o que aconteceu. Linhas "só você" são privadas.
-- Topo: Relógio 1–12 (+ Rodada / −), Dado (à vista), Dado escondido (só você vê o resultado;
+- Topo: Relógio 1–12 (+ Rodada / −, só o host), Dado (à vista), Dado escondido (só você vê o resultado;
   serve para Delírio e oráculo falso), Noite, e o menu ☰.
 - NOITE: todos veem a tela escura. Quem está marcado como Tomado recebe em segredo
   1 carta de Sanidade 10% e vê a planta por baixo para mover o Palhaço 1 cômodo.
@@ -146,6 +155,65 @@ os dois ligados por padrão. Com o automático desligado, o Palhaço volta ao mo
 
 
 -----------------------------------------------------------------------------
+3c. TURNOS, CUSTO DE COMPRA E AJUDA (22/10)
+-----------------------------------------------------------------------------
+
+O QUE A REGRA DIZ (regras.md, seção 6 "O turno" e seção 4):
+  - Na sua vez, nesta ordem: 1) Sussurro, opcional (1 Dica); 2) Movimento, até 2 Salas, OU descansar (+5%);
+    3) Explorar (olhar a Ficha do cômodo; Armadilha = 1 Laço); 4) Evento (compre 1); 5) Nível (compre 1
+    Sanidade do seu nível; 75%/50% compram 1 Distorção no fim da vez); 6) Reabastecer (Dicas até 3).
+    "Quando todos jogarem, avance o Relógio em 1." Depois vem a Noite.
+  - A regra NÃO fala em "pontos de ação" nem cobra nada para comprar: comprar carta não custa sanidade,
+    moedas nem ação. Cada compra é um passo da vez. O que tira sanidade é o efeito da carta (alternativa da
+    Sanidade, Evento, Laço), a fobia, a Dica falsa seguida e o pedágio do Palhaço (1 moeda; sem moedas, 15%).
+  Por isso o "contador" da mesa não é de ações gastas: mostra os passos da vez (Dica 0/1, Mover 0/2,
+  Ficha, Evento 0/1, Sanidade 0/1, Dicas 3/3) e fica vermelho quando passa do que a regra pede.
+
+TURNOS (o host decide tudo; os convidados só veem):
+  - Ordem: a de entrada na sala. O host pode marcar "Sortear a ordem dos turnos" no saguão, ou usar
+    "Sortear ordem" / "Ordem de entrada" na aba Mesa (só no começo de uma rodada).
+  - Faixa abaixo do topo, para todos: "Vez de Ana (O Médico) · Rodada 3 · 2º de 4 · depois: Beto" e os
+    passos já feitos. O peão de quem está na vez brilha e o nome fica dourado. Na aba Mesa, "Ordem dos turnos".
+  - "Passar a vez" (grande) aparece só para quem está na vez e para o host ("Passar a vez de Ana", para quem
+    caiu ou esqueceu). Quem está na vez também tem "Descansar" (+5%, no lugar do Movimento).
+  - Quando o último passa, a rodada avança sozinha: é a mesma lógica do "+ Rodada" (Relógio anda, Palhaço
+    automático age) e a vez volta ao primeiro. O log lembra que é hora da Noite. "+ Rodada" e "−" manuais
+    continuam, agora só para o host.
+  - Ao chegar a sua vez: aviso grande "É a sua vez!", som curto (WebAudio) e vibração no celular.
+  - Fora da vez a mesa continua livre (Dicas sussurradas, Seguir/Ignorar, Corrente, Dado). Se alguém compra
+    ou move o próprio peão fora da vez, a mesa deixa (é sandbox), mostra um aviso leve e o log público marca
+    "(fora da vez)". Pacto e Sanidade 10% nunca ganham essa marca (seriam pista de Tomado).
+  - Tudo vai para o log: ordem, quem passou e o que fez ("Fez: andou 2 Salas, 1 Evento, 1 Sanidade"),
+    rodada automática, descanso, host passando por alguém.
+
+CUSTO AO PUXAR CARTA (só quem comprou vê):
+  - A carta (verso do baralho) voa do baralho para a mão; a aba Mão pisca.
+  - Aviso flutuante com o que mudou: "Grátis nesta vez" / "1ª compra da vez" / "Acima da regra: 2º Evento
+    nesta vez" / "Fora da sua vez", o passo usado ("Passo 4 (Evento): 1/1 usado"), lembretes (nível certo,
+    Dicas 4/3, máximo de Distorções) e "Baralho Evento: 26 restantes". Pacto e Sanidade 10% não mostram
+    quantas sobram (contar revelaria Tomados).
+  - O Disco (aba) e as moedas (no peão e na aba Mesa) piscam quando mudam. Perdas/ganhos SEUS (pedágio,
+    proposta, descanso) aparecem num aviso "−1 moeda" / "−10% sanidade · só você vê".
+  - "Seus últimos gastos" na aba Mão: compras, pedágios, propostas aceitas, descanso e ajustes do Disco.
+    Vem só na visão do dono (v.eu.gastos); nunca na parte pública.
+
+AJUDA:
+  - Botão "? Como jogar" no topo (sempre visível; na tela inicial, o link "Como jogar?"): "Regras em
+    1 minuto" (objetivo, a vez, sanidade e níveis, Tomados e Pactos, Palhaço e moedas, Noite, vitória) e
+    "Como usar a mesa" (faixa, Mão, Disco, Mesa, Log, + Rodada, Dado, Dado escondido, Noite, Corrente, planta).
+  - Tour guiado de 8 balões (faixa da vez, planta, Relógio, Dado/Noite, Mão, Disco, Mesa/Log, botão ?).
+    Pode pular, voltar e repetir (menu ☰ > "Repetir o tour guiado" ou no Como jogar). Funciona no celular.
+  - NÍVEL DE EXPERIÊNCIA: cada um escolhe no saguão, junto com o Hóspede; fica no localStorage do
+    navegador (chave sussurros-nivel) e muda no menu ☰ > "Nível de experiência". Não vai pela rede.
+      Iniciante: tour completo quando a partida começa + dicas contextuais (uma vez cada): "Agora mova seu
+        peão", "Toque no baralho para comprar", "Terminou? Passe a vez", custo da 1ª compra, 1º pedágio do
+        Palhaço, 1ª Noite, 1ª Dica recebida, tentativa fora da vez. Quem não escolher conta como Iniciante.
+      Intermediário: 4 balões curtos no início (vez, comprar, passar a vez, Palhaço). Sem dicas contextuais.
+      Veterano: nada abre sozinho.
+    O tour abre uma vez por sala (sussurros-tour-CÓDIGO). Cada tela tem o seu: não sincroniza.
+
+
+-----------------------------------------------------------------------------
 4. PRIVACIDADE: O QUE CADA UM RECEBE
 -----------------------------------------------------------------------------
 
@@ -161,9 +229,11 @@ O navegador do host guarda o estado oficial e manda a cada jogador só a "visão
     resultante de um pedágio.
 Todos veem de qual NÍVEL cada um comprou a carta de Sanidade, como manda a regra.
 A compra de Pacto não aparece no log público.
-Os testes conferem isso: testes/protocolo.test.mjs (359 checagens, com o Palhaço automático ligado),
-testes/palhaco.test.mjs (2512 checagens) e testes/e2e_playwright.mjs (1558 checagens nas mensagens
-que de fato chegaram pela rede, 1 host + 3 convidados).
+  - o histórico "Seus últimos gastos" dos outros (vai só em v.eu.gastos do dono);
+  - o nível de experiência e o tour de cada um (ficam só no navegador dele).
+Os testes conferem isso: testes/protocolo.test.mjs (379 checagens, com o Palhaço automático ligado),
+testes/palhaco.test.mjs (2512 checagens), testes/turnos.test.mjs (193 checagens) e
+testes/e2e_playwright.mjs (3999 checagens nas mensagens que de fato chegaram pela rede, 1 host + 3 convidados).
 Atenção: escolher quem tem MENOS sanidade para uma proposta dá uma pista fraca (é só uma das três
 regras de escolha, e às vezes a oferta nem é possível para essa pessoa).
 
@@ -188,6 +258,14 @@ está com quem, e isso só o host sabe.
   da regra física (não há os 5% do Susto além do pedágio). Desligando o automático, volta o manual.
 - Os clipes são mudos (o sino é sintetizado na hora) e começam quando cada navegador recebe o aviso
   do host: a diferença entre as telas é a da rede (normalmente menos de 1 s).
+- Turnos: a mesa registra os passos, mas não obriga a ordem (pode comprar o Evento antes de mover) nem
+  bloqueia compra/movimento fora da vez (só avisa). O contador de "Mover" mede pelas portas entre a sala de
+  saída e a de chegada de cada arrasto; não sabe se o peão passou por paredes. "Ficha" conta só quando você
+  olha a Ficha do seu cômodo. A Noite ainda é chamada à mão (o log lembra).
+- Custo: como a regra não cobra nada pela compra, o aviso mostra o passo usado e os limites da regra, e
+  não "−1 ação". A perda de sanidade de uma carta de Sanidade continua sendo aplicada à mão no Disco.
+- Tour e dicas: textos fixos; se a tela for muito pequena (menos de 360 px de altura livre) o balão cai no
+  centro. O som "É a sua vez!" só toca depois do primeiro toque na página (regra dos navegadores).
 - Habilidades são só o botão "Usei a habilidade" (exceção: a Médium tem o botão de olhar
   qualquer Ficha). O Radialista, o Contador de Histórias etc. são resolvidos na conversa.
 - Delírio: a mesa não inverte o selo nem o texto; use o "Dado escondido" e aplique.
@@ -212,10 +290,11 @@ está com quem, e isso só o host sabe.
 
 index.html ........... página única
 css/estilo.css ....... visual (cartaz de circo: creme, vermelho, mostarda, turquesa; Cinzel + EB Garamond)
-js/app.js ............ interface (telas, abas, modais, noite, dado)
+js/app.js ............ interface (telas, abas, modais, noite, dado, faixa da vez, custo de compra)
+js/tutorial.js ....... Como jogar, tour guiado, nível de experiência e dicas contextuais (só local)
 js/mapa.js ........... planta com zoom/arrasto, peões e Fichas de Sala
 js/sessao.js ......... liga motor, rede e interface (host e convidado)
-js/motor.js .......... estado oficial + ações + visao() por jogador (só roda no host)
+js/motor.js .......... estado oficial + ações + turnos + custo + visao() por jogador (só roda no host)
 js/palhaco.js ........ Palhaço com IA: grafo de portas, falas, 12 propostas, escolha de alvo
 js/rede.js ........... PeerJS (host e convidado, reconexão)
 js/config.js ......... STUN/TURN e servidor PeerJS (único arquivo para editar)
@@ -232,6 +311,9 @@ capturas/ ............ telas do host e dos convidados (desktop e celular)
 
 Protocolo (JSON pelo DataChannel):
   convidado -> host: {t:'entrar', apelido, token} | {t:'acao', pedido, a:{t:'comprar', baralho:'evento'} ...}
+  convidado -> host (turnos): {t:'acao', a:{t:'passarVez', seq}} | {t:'descansar'} | host: {t:'ordemTurnos', embaralhar}
+  visão (turnos): v.turno = {ordem, vez, daVez, rodada, seq, feito:{dica,salas,descanso,ficha,evento,nivel,dicas,distorcao,laco}}
+                  v.eu.gastos = [{t, txt}] (só o dono); resposta da compra: {ok, carta, custo:{titulo, linhas, acima, baralho, restante, foraDaVez}}
   convidado -> host (Palhaço): {t:'acao', a:{t:'respostaProposta', ref, aceitar}} | host: {t:'palhacoConfig', auto, pedagio}
   visão (Palhaço): v.shows = [{seq, passos:[{t:'fala',texto} | {t:'mov',caminho,pegos} | {t:'dado',face}
                    | {t:'video',clipe} | {t:'evento',carta}]}], v.jogadores[].moedas, v.eu.proposta (só o dono)

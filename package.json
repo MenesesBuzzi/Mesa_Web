@@ -1,6 +1,6 @@
 {
   "name": "sussurros-mesa-web",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "Mesa online peer-to-peer do jogo de tabuleiro Sussurros (site estático, sem build).",
@@ -8,6 +8,7 @@
     "servir": "python3 -m http.server 8080",
     "teste:protocolo": "node testes/protocolo.test.mjs",
     "teste:palhaco": "node testes/palhaco.test.mjs",
-    "teste:navegador": "node testes/e2e_playwright.mjs"
+    "teste:navegador": "node testes/e2e_playwright.mjs",
+    "teste:turnos": "node testes/turnos.test.mjs"
   }
 }
